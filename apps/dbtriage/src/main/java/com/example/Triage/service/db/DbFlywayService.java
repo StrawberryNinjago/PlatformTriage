@@ -1,8 +1,10 @@
-package com.example.Triage.core;
+package com.example.Triage.service.db;
 
+import com.example.Triage.dao.DbQueries;
+import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.LatestApplied;
+import com.example.Triage.model.enums.FlywayStatus;
 import com.example.Triage.model.response.DbFlywayHealthResponse;
-import com.example.Triage.model.response.DbFlywayHealthResponse.FlywayStatus;
-import com.example.Triage.model.response.DbFlywayHealthResponse.LatestApplied;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.stereotype.Service;
 
@@ -18,18 +20,17 @@ public class DbFlywayService {
 
         try (Connection c = ds.getConnection()) {
             boolean historyExists = flywayHistoryExists(c);
-            
+
             if (!historyExists) {
                 return new DbFlywayHealthResponse(
-                    FlywayStatus.NOT_CONFIGURED,
-                    false,
-                    null,
-                    0,
-                    "Flyway schema history table not found. Flyway may not be configured."
-                );
+                        FlywayStatus.NOT_CONFIGURED,
+                        false,
+                        null,
+                        0,
+                        "Flyway schema history table not found. Flyway may not be configured.");
             }
 
-            LatestApplied latest = queryLatestApplied(c);
+            var latest = queryLatestApplied(c);
             int failedCount = queryFlywayFailedCount(c);
 
             FlywayStatus status;
@@ -43,8 +44,8 @@ public class DbFlywayService {
                 message = "No successful migrations found.";
             } else {
                 status = FlywayStatus.HEALTHY;
-                message = String.format("Latest migration: %s - %s", 
-                    latest.version(), latest.description());
+                message = String.format("Latest migration: %s - %s",
+                        latest.version(), latest.description());
             }
 
             return new DbFlywayHealthResponse(status, historyExists, latest, failedCount, message);
@@ -52,24 +53,17 @@ public class DbFlywayService {
     }
 
     private boolean flywayHistoryExists(Connection c) throws SQLException {
-        String sql = "select to_regclass('public.flyway_schema_history') as flyway_table";
-        try (PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = c.prepareStatement(DbQueries.GET_FLYWAY_HISTORY);
+                ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getString("flyway_table") != null;
         }
     }
 
     private LatestApplied queryLatestApplied(Connection c) throws SQLException {
-        String sql = """
-                select installed_rank, version, description, script, installed_on
-                from public.flyway_schema_history
-                where success = true
-                order by installed_rank desc
-                limit 1
-                """;
-        try (PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = c.prepareStatement(
+                DbQueries.GET_LATEST_APPLIED);
+                ResultSet rs = ps.executeQuery()) {
 
             if (!rs.next())
                 return null;
@@ -80,28 +74,28 @@ public class DbFlywayService {
             String script = rs.getString("script");
 
             Timestamp ts = rs.getTimestamp("installed_on");
-            OffsetDateTime installedOn = ts != null 
-                ? ts.toInstant().atOffset(OffsetDateTime.now().getOffset()) 
-                : null;
+            OffsetDateTime installedOn = ts != null
+                    ? ts.toInstant().atOffset(OffsetDateTime.now().getOffset())
+                    : null;
 
             return new LatestApplied(rank, version, description, script, installedOn);
         }
     }
 
     private int queryFlywayFailedCount(Connection c) throws SQLException {
-        String sql = "select count(*) as cnt from public.flyway_schema_history where success = false";
-        try (PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = c.prepareStatement(
+                DbQueries.GET_FLYWAY_FAILED_COUNT);
+                ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getInt("cnt");
         }
     }
 
     private DataSource buildDataSource(DbConnectContext ctx) {
-        PGSimpleDataSource ds = new PGSimpleDataSource();
-        String sslMode = (ctx.sslMode() == null || ctx.sslMode().isBlank()) ? "require" : ctx.sslMode();
+        var ds = new PGSimpleDataSource();
+        var sslMode = (ctx.sslMode() == null || ctx.sslMode().isBlank()) ? "require" : ctx.sslMode();
 
-        String url = String.format(
+        var url = String.format(
                 "jdbc:postgresql://%s:%d/%s?sslmode=%s",
                 ctx.host(), ctx.port(), ctx.database(), sslMode);
 
@@ -113,4 +107,3 @@ public class DbFlywayService {
         return ds;
     }
 }
-

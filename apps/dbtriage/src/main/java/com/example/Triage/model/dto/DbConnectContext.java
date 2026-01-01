@@ -1,4 +1,4 @@
-package com.example.Triage.core;
+package com.example.Triage.model.dto;
 
 import java.time.Instant;
 

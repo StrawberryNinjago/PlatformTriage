@@ -1,12 +1,19 @@
-package com.example.Triage.core;
+package com.example.Triage.service.db;
 
 import com.example.Triage.model.response.DbPrivilegesResponse;
-import com.example.Triage.model.response.DbPrivilegesResponse.ValidationStatus;
+import com.example.Triage.dao.DbQueries;
+import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.enums.ValidationStatus;
 import org.postgresql.ds.PGSimpleDataSource;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.sql.DataSource;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -15,10 +22,9 @@ import java.util.List;
 public class DbPrivilegesService {
 
     private static final List<String> EXPECTED_PRIVILEGES = Arrays.asList(
-            "SELECT", "INSERT", "UPDATE", "DELETE"
-    );
+            "SELECT", "INSERT", "UPDATE", "DELETE");
 
-    public DbPrivilegesResponse checkPrivileges(DbConnectContext ctx, String schema, String table) 
+    public DbPrivilegesResponse checkPrivileges(DbConnectContext ctx, String schema, String table)
             throws SQLException {
         DataSource ds = buildDataSource(ctx);
 
@@ -27,10 +33,9 @@ public class DbPrivilegesService {
             String owner = getTableOwner(c, schema, table);
             if (owner == null) {
                 return new DbPrivilegesResponse(
-                    schema, table, ValidationStatus.FAIL, 
-                    null, getCurrentUser(c), List.of(), EXPECTED_PRIVILEGES,
-                    String.format("Table %s.%s not found", schema, table)
-                );
+                        schema, table, ValidationStatus.FAIL,
+                        null, getCurrentUser(c), List.of(), EXPECTED_PRIVILEGES,
+                        String.format("Table %s.%s not found", schema, table));
             }
 
             // Get current user
@@ -53,60 +58,58 @@ public class DbPrivilegesService {
 
             if (missingPrivileges.isEmpty()) {
                 status = ValidationStatus.PASS;
-                message = String.format("User '%s' has all expected privileges on %s.%s", 
-                    currentUser, schema, table);
+                message = String.format("User '%s' has all expected privileges on %s.%s",
+                        currentUser, schema, table);
             } else if (grantedPrivileges.isEmpty()) {
                 status = ValidationStatus.FAIL;
-                message = String.format("User '%s' has NO privileges on %s.%s", 
-                    currentUser, schema, table);
+                message = String.format("User '%s' has NO privileges on %s.%s",
+                        currentUser, schema, table);
             } else {
                 status = ValidationStatus.WARNING;
-                message = String.format("User '%s' is missing %d privilege(s): %s", 
-                    currentUser, missingPrivileges.size(), String.join(", ", missingPrivileges));
+                message = String.format("User '%s' is missing %d privilege(s): %s",
+                        currentUser, missingPrivileges.size(), String.join(", ", missingPrivileges));
             }
 
             return new DbPrivilegesResponse(
-                schema, table, status, owner, currentUser, 
-                grantedPrivileges, missingPrivileges, message
-            );
+                    schema, table, status, owner, currentUser,
+                    grantedPrivileges, missingPrivileges, message);
         }
     }
 
     private String getTableOwner(Connection c, String schema, String table) throws SQLException {
-        String sql = "SELECT tableowner FROM pg_tables WHERE schemaname = ? AND tablename = ?";
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setString(1, schema);
-            ps.setString(2, table);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("tableowner");
-                }
-                return null;
-            }
+        if (c == null) {
+            throw new SQLException("Connection is null");
         }
+        
+        var ds = new org.springframework.jdbc.datasource.SingleConnectionDataSource(c, true);
+        var jdbcTemplate = new NamedParameterJdbcTemplate(ds);
+        
+        var params = new MapSqlParameterSource();
+        params.addValue("schema", schema);
+        params.addValue("table", table);
+        
+        var results = jdbcTemplate.query(
+            DbQueries.GET_TABLE_OWNER,
+            params,
+            (rs, rowNum) -> rs.getString("tableowner")
+        );
+        
+        return results.isEmpty() ? null : results.get(0);
     }
 
     private String getCurrentUser(Connection c) throws SQLException {
-        String sql = "SELECT current_user";
-        try (PreparedStatement ps = c.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+        try (PreparedStatement ps = c.prepareStatement(DbQueries.GET_CURRENT_USER);
+                ResultSet rs = ps.executeQuery()) {
             rs.next();
             return rs.getString(1);
         }
     }
 
-    private List<String> getGrantedPrivileges(Connection c, String schema, String table, String user) 
+    private List<String> getGrantedPrivileges(Connection c, String schema, String table, String user)
             throws SQLException {
-        String sql = """
-                SELECT privilege_type 
-                FROM information_schema.table_privileges 
-                WHERE table_schema = ? 
-                  AND table_name = ? 
-                  AND grantee IN (?, 'PUBLIC')
-                """;
-        
+
         List<String> privileges = new ArrayList<>();
-        try (PreparedStatement ps = c.prepareStatement(sql)) {
+        try (PreparedStatement ps = c.prepareStatement(DbQueries.GET_GRANTED_PRIVILEGES)) {
             ps.setString(1, schema);
             ps.setString(2, table);
             ps.setString(3, user);
@@ -135,4 +138,3 @@ public class DbPrivilegesService {
         return ds;
     }
 }
-

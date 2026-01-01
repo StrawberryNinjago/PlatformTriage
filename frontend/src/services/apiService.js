@@ -24,11 +24,19 @@ export const apiService = {
     axios.get(`${API_BASE}/tables`, { params: { connectionId, schema } }),
   
   searchTables: (connectionId, schema, q) => 
-    axios.get(`${API_BASE}/tables/search`, { params: { connectionId, schema, q } }),
+    axios.get(`${API_BASE}/tables/search`, { params: { connectionId, schema, queryString: q } }),
   
   // Privileges
-  getPrivileges: (connectionId, schema, table) => 
-    axios.get(`${API_BASE}/privileges`, { params: { connectionId, schema, table } }),
+  getPrivileges: (connectionId, schema, table) => {
+    // Convert schema string to DbSchema enum format
+    const isPublic = !schema || schema === 'public';
+    return axios.post(`${API_BASE}/privileges:check`, {
+      connectionId,
+      schema: isPublic ? 'PUBLIC' : 'CUSTOM',
+      schemaName: isPublic ? null : schema,
+      tableName: table
+    });
+  },
   
   // Table Details
   getTableIndexes: (connectionId, schema, table) => 

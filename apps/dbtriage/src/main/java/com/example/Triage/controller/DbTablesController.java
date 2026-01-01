@@ -1,47 +1,41 @@
 package com.example.Triage.controller;
 
-import com.example.Triage.core.DbConnectionRegistry;
-import com.example.Triage.core.DbTablesService;
-import com.example.Triage.core.DbSummaryService;
-import com.example.Triage.core.DbIntrospectService;
+import com.example.Triage.handler.DbTablesHandler;
+import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
 import com.example.Triage.model.response.ErrorResponse;
+import com.example.Triage.util.LogUtils;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/db/tables")
+@RequiredArgsConstructor
+@Slf4j
 public class DbTablesController {
-
-    private final DbConnectionRegistry registry;
-    private final DbTablesService tablesService;
-    private final DbSummaryService summaryService;
-    private final DbIntrospectService introspectService;
-
-    public DbTablesController(DbConnectionRegistry registry, DbTablesService tablesService,
-                              DbSummaryService summaryService, DbIntrospectService introspectService) {
-        this.registry = registry;
-        this.tablesService = tablesService;
-        this.summaryService = summaryService;
-        this.introspectService = introspectService;
-    }
+    private final DbTablesHandler tablesHandler;
 
     @GetMapping
     public ResponseEntity<?> listTables(
             @RequestParam String connectionId,
             @RequestParam(defaultValue = "public") String schema) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
+        log.info("#listTables: Listing tables for connectionId: {}, schema: {}", connectionId, schema);
         try {
-            return ResponseEntity.ok(tablesService.listTables(ctx, schema));
+            var resp = tablesHandler.listTables(connectionId, schema);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("LIST_TABLES_FAILED", safeMessage(e)));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("LIST_TABLES_FAILED", LogUtils.safeMessage(e)));
         }
     }
 
@@ -49,24 +43,24 @@ public class DbTablesController {
     public ResponseEntity<?> searchTables(
             @RequestParam String connectionId,
             @RequestParam(defaultValue = "public") String schema,
-            @RequestParam String q) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
-        if (q == null || q.isBlank()) {
+            @RequestParam String queryString) {
+        log.info("#searchTables: Searching tables for connectionId: {}, schema: {}, queryString: {}", connectionId,
+                schema,
+                queryString);
+        if (queryString == null || queryString.isBlank()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse("INVALID_QUERY", "Search query 'q' cannot be empty."));
         }
 
         try {
-            return ResponseEntity.ok(tablesService.searchTables(ctx, schema, q));
+            var resp = tablesHandler.searchTables(connectionId, schema, queryString);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("SEARCH_TABLES_FAILED", safeMessage(e)));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("SEARCH_TABLES_FAILED", LogUtils.safeMessage(e)));
         }
     }
 
@@ -75,18 +69,17 @@ public class DbTablesController {
             @RequestParam String connectionId,
             @RequestParam(defaultValue = "public") String schema,
             @RequestParam String table) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
+        log.info("#listIndexes: Listing indexes for connectionId: {}, schema: {}, table: {}", connectionId, schema,
+                table);
         try {
-            return ResponseEntity.ok(summaryService.listIndexes(ctx, schema, table));
+            var resp = tablesHandler.listIndexes(connectionId, schema, table);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("LIST_INDEXES_FAILED", safeMessage(e)));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("LIST_INDEXES_FAILED", LogUtils.safeMessage(e)));
         }
     }
 
@@ -95,24 +88,17 @@ public class DbTablesController {
             @RequestParam String connectionId,
             @RequestParam(defaultValue = "public") String schema,
             @RequestParam String table) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
+        log.info("#introspectTable: Introspecting table for connectionId: {}, schema: {}, table: {}", connectionId,
+                schema, table);
         try {
-            return ResponseEntity.ok(introspectService.introspectTable(ctx, schema, table));
+            var resp = tablesHandler.introspectTable(connectionId, schema, table);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(new ErrorResponse("TABLE_INTROSPECT_FAILED", safeMessage(e)));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("TABLE_INTROSPECT_FAILED", LogUtils.safeMessage(e)));
         }
-    }
-
-    private String safeMessage(Exception e) {
-        String msg = e.getMessage();
-        return (msg == null || msg.isBlank()) ? "Operation failed." : msg;
     }
 }
-

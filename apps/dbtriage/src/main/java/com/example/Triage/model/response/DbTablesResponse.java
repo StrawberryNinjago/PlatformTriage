@@ -2,14 +2,9 @@ package com.example.Triage.model.response;
 
 import java.util.List;
 
+import com.example.Triage.model.dto.TableInfo;
+
 public record DbTablesResponse(
-        String schema,
-        List<TableInfo> tables) {
-
-    public record TableInfo(
-            String name,
-            Long estimatedRowCount,
-            String owner) {
-    }
+                String schema,
+                List<TableInfo> tables) {
 }
-

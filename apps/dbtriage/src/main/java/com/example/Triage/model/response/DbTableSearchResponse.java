@@ -2,15 +2,10 @@ package com.example.Triage.model.response;
 
 import java.util.List;
 
+import com.example.Triage.model.dto.TableInfo;
+
 public record DbTableSearchResponse(
-        String schema,
-        String searchQuery,
-        List<TableMatch> matches) {
-
-    public record TableMatch(
-            String tableName,
-            Long estimatedRowCount,
-            String owner) {
-    }
+                String schema,
+                String queryString,
+                List<TableInfo> tables) {
 }
-

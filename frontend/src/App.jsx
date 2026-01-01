@@ -50,10 +50,7 @@ function App() {
     if (!connectionId) return;
     try {
       const response = await apiService.getSummary(connectionId);
-      setSummaryData({
-        flyway: { status: response.data.flyway?.historyTableExists ? 'HEALTHY' : 'NOT_CONFIGURED' },
-        ...response.data
-      });
+      setSummaryData(response.data);
       setResults(response.data);
       addConsoleMessage('✓ Summary loaded', 'success');
     } catch (error) {
@@ -90,7 +87,7 @@ function App() {
 
         case 'find-table':
           response = await apiService.searchTables(connectionId, schema, params.searchQuery);
-          addConsoleMessage(`✓ Found ${response.data.matches.length} matching tables`, 'success');
+          addConsoleMessage(`✓ Found ${response.data.tables?.length || 0} matching tables`, 'success');
           break;
 
         case 'check-ownership':
@@ -98,11 +95,6 @@ function App() {
           setSummaryData(prev => ({ ...prev, privileges: response.data }));
           addConsoleMessage(`✓ Privileges checked: ${response.data.status}`, 
             response.data.status === 'PASS' ? 'success' : 'warning');
-          break;
-
-        case 'list-indexes':
-          response = await apiService.getTableIndexes(connectionId, schema, params.tableName);
-          addConsoleMessage(`✓ Indexes retrieved for ${params.tableName}`, 'success');
           break;
 
         case 'table-details':
@@ -139,42 +131,49 @@ function App() {
           </Container>
         </Box>
 
-        <Container maxWidth="xl" sx={{ mt: 3, pb: 3 }}>
-          <Grid container spacing={3}>
-            {/* Left Panel */}
-            <Grid item xs={12} md={4}>
-              <Paper elevation={2}>
-                <ConnectionForm
-                  onConnect={handleConnect}
-                  onLoadSummary={handleLoadSummary}
-                  isConnected={connectionStatus === 'connected'}
-                />
-              </Paper>
+        <Container maxWidth="xl" sx={{ mt: 3, pb: 3, height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <Grid container spacing={3} sx={{ flex: 1, minHeight: 0 }}>
+              {/* Left Panel */}
+              <Grid item xs={12} md={4} sx={{ display: 'flex', flexDirection: 'column' }}>
+                <Paper elevation={2}>
+                  <ConnectionForm
+                    onConnect={handleConnect}
+                    onLoadSummary={handleLoadSummary}
+                    isConnected={connectionStatus === 'connected'}
+                  />
+                </Paper>
 
-              <Paper elevation={2} sx={{ mt: 2 }}>
-                <ActionButtons
-                  isConnected={connectionStatus === 'connected'}
-                  schema={schema}
-                  onAction={handleAction}
+                <Paper elevation={2} sx={{ mt: 2, flex: 1, overflow: 'auto' }}>
+                  <ActionButtons
+                    isConnected={connectionStatus === 'connected'}
+                    schema={schema}
+                    onAction={handleAction}
+                  />
+                </Paper>
+              </Grid>
+
+              {/* Right Panel */}
+              <Grid item xs={12} md={8} sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <SummaryPanel
+                  connectionStatus={connectionStatus}
+                  summaryData={summaryData}
                 />
-              </Paper>
+
+                <Box sx={{ flex: 1, minHeight: 0 }}>
+                  <ResultsPanel
+                    results={results}
+                    onClear={() => setResults(null)}
+                  />
+                </Box>
+              </Grid>
             </Grid>
 
-            {/* Right Panel */}
-            <Grid item xs={12} md={8}>
-              <SummaryPanel
-                connectionStatus={connectionStatus}
-                summaryData={summaryData}
-              />
-
-              <ResultsPanel
-                results={results}
-                onClear={() => setResults(null)}
-              />
-
+            {/* Console Panel - Fixed at Bottom */}
+            <Box sx={{ mt: 2, flexShrink: 0 }}>
               <ConsolePanel messages={consoleMessages} />
-            </Grid>
-          </Grid>
+            </Box>
+          </Box>
         </Container>
       </Box>
     </ThemeProvider>

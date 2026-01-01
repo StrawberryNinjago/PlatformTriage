@@ -2,6 +2,8 @@ package com.example.Triage.model.response;
 
 import java.util.List;
 
+import com.example.Triage.model.enums.ValidationStatus;
+
 public record DbPrivilegesResponse(
         String schema,
         String table,
@@ -11,11 +13,4 @@ public record DbPrivilegesResponse(
         List<String> grantedPrivileges,
         List<String> missingPrivileges,
         String message) {
-
-    public enum ValidationStatus {
-        PASS,
-        FAIL,
-        WARNING
-    }
 }
-

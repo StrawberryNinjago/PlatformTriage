@@ -13,12 +13,12 @@ import {
 
 export default function ConnectionForm({ onConnect, onLoadSummary, isConnected }) {
   const [formData, setFormData] = useState({
-    host: 'your-server.postgres.database.azure.com',
+    host: 'localhost',
     port: 5432,
-    database: 'postgres',
-    username: 'my-user',
-    password: '',
-    sslMode: 'require',
+    database: 'cartdb',
+    username: 'cart_user',
+    password: 'cart_pass',
+    sslMode: 'disable',
     schema: 'public'
   });
   const [loading, setLoading] = useState(false);

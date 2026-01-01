@@ -1,8 +1,9 @@
-package com.example.Triage.core;
+package com.example.Triage.service.db;
 
 import org.springframework.stereotype.Component;
 
-import com.example.Triage.core.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContext;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;

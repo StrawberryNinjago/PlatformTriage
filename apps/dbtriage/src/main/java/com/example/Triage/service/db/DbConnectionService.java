@@ -1,9 +1,10 @@
-package com.example.Triage.core;
+package com.example.Triage.service.db;
 
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.stereotype.Service;
 
-import com.example.Triage.core.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContext;
+
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;

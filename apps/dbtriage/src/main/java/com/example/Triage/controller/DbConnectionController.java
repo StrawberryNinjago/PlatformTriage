@@ -1,124 +1,89 @@
 package com.example.Triage.controller;
 
-import com.example.Triage.core.DbConnectionRegistry;
-import com.example.Triage.core.DbConnectionService;
-import com.example.Triage.core.DbSummaryService;
-import com.example.Triage.core.DbIdentityService;
-import com.example.Triage.core.DbFlywayService;
+import com.example.Triage.handler.DbConnectionHandler;
+import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
 import com.example.Triage.model.request.DbConnectionRequest;
-import com.example.Triage.model.response.DbConnectionResponse;
-import com.example.Triage.model.response.DbSummaryResponse;
-import com.example.Triage.model.response.DbIdentityResponse;
-import com.example.Triage.model.response.DbFlywayHealthResponse;
-import com.example.Triage.model.errorhandling.ApiError;
 import com.example.Triage.model.response.ErrorResponse;
+import com.example.Triage.util.LogUtils;
+
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.GetMapping;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @RestController
 @RequestMapping("/api/db")
+@RequiredArgsConstructor
+@Slf4j
 public class DbConnectionController {
 
-    private final DbConnectionRegistry registry;
-    private final DbConnectionService service;
-    private final DbSummaryService summaryService;
-    private final DbIdentityService identityService;
-    private final DbFlywayService flywayService;
-
-    public DbConnectionController(DbConnectionRegistry registry, DbConnectionService service,
-            DbSummaryService summaryService, DbIdentityService identityService,
-            DbFlywayService flywayService) {
-        this.registry = registry;
-        this.service = service;
-        this.summaryService = summaryService;
-        this.identityService = identityService;
-        this.flywayService = flywayService;
-    }
+    private final DbConnectionHandler connectionHandler;
 
     @PostMapping("/connections")
     public ResponseEntity<?> createConnection(@Valid @RequestBody DbConnectionRequest req) {
-        var ctx = registry.create(
-                req.host(),
-                req.port(),
-                req.database(),
-                req.username(),
-                req.password(),
-                req.sslMode(),
-                req.schema());
-
+        log.info("#createConnection: Creating connection for request: {}", req);
         try {
-            service.testConnection(ctx);
-            return ResponseEntity.ok(new DbConnectionResponse(ctx.id(), true));
-        } catch (Exception ex) {
-            // Do not leak passwords/connection strings. Provide a clean message.
-            registry.delete(ctx.id());
+            var resp = connectionHandler.createConnection(req);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
+        } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse("DB_CONNECT_FAILED", safeMessage(ex)));
+                    .body(new ErrorResponse("DB_CONNECT_FAILED", LogUtils.safeMessage(e)));
         }
     }
 
     @GetMapping("/summary")
     public ResponseEntity<?> summary(@RequestParam String connectionId) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
+        log.info("#summary: Getting summary for connectionId: {}", connectionId);
         try {
-            var resp = summaryService.getSummary(ctx);
+            var resp = connectionHandler.getSummary(connectionId);
             return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse("DB_SUMMARY_FAILED", safeMessage(e)));
+                    .body(new ErrorResponse("DB_SUMMARY_FAILED", LogUtils.safeMessage(e)));
         }
     }
 
     @GetMapping("/identity")
     public ResponseEntity<?> getIdentity(@RequestParam String connectionId) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
+        log.info("#getIdentity: Getting identity for connectionId: {}", connectionId);
         try {
-            DbIdentityResponse resp = identityService.getIdentity(ctx);
+            var resp = connectionHandler.getIdentity(connectionId);
             return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse("DB_IDENTITY_FAILED", safeMessage(e)));
+                    .body(new ErrorResponse("DB_IDENTITY_FAILED", LogUtils.safeMessage(e)));
         }
     }
 
     @GetMapping("/flyway/health")
     public ResponseEntity<?> getFlywayHealth(@RequestParam String connectionId) {
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(new ErrorResponse("CONNECTION_NOT_FOUND",
-                            "Connection not found or expired. Please connect again."));
-        }
-
+        log.info("#getFlywayHealth: Getting flyway health for connectionId: {}", connectionId);
         try {
-            DbFlywayHealthResponse resp = flywayService.getFlywayHealth(ctx);
+            var resp = connectionHandler.getFlywayHealth(connectionId);
             return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body(new ErrorResponse("FLYWAY_HEALTH_FAILED", safeMessage(e)));
+                    .body(new ErrorResponse("FLYWAY_HEALTH_FAILED", LogUtils.safeMessage(e)));
         }
-    }
-
-    private String safeMessage(Exception ex) {
-        // Keep it user-friendly and not too verbose for MVP.
-        String msg = ex.getMessage();
-        if (msg == null || msg.isBlank())
-            return "Failed to connect to database.";
-        // add more redaction here if needed.
-        return msg;
     }
 }

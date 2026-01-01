@@ -12,4 +12,3 @@ public record DbIdentityResponse(
         OffsetDateTime serverTime,
         String schema) {
 }
-
