@@ -1,7 +1,7 @@
 package com.example.Triage.service.db;
 
 import com.example.Triage.dao.DbQueries;
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.dto.DbConstraint;
 import com.example.Triage.model.response.DbConstraintsResponse;
 import com.example.Triage.model.response.DbTableIntrospectResponse;
@@ -21,7 +21,7 @@ public class DbIntrospectService {
     private final DbDataSourceFactory dataSourceFactory;
     private final DbIndexService indexService;
 
-    public DbConstraintsResponse listConstraints(DbConnectContext ctx, String schema, String table)
+    public DbConstraintsResponse listConstraints(DbConnectContextDto ctx, String schema, String table)
             throws SQLException {
         DataSource ds = dataSourceFactory.build(ctx);
         try (var conn = ds.getConnection()) {
@@ -34,7 +34,7 @@ public class DbIntrospectService {
         }
     }
 
-    public DbTableIntrospectResponse introspectTable(DbConnectContext ctx, String schema, String table)
+    public DbTableIntrospectResponse introspectTable(DbConnectContextDto ctx, String schema, String table)
             throws SQLException {
         DataSource ds = dataSourceFactory.build(ctx);
         try (var conn = ds.getConnection()) {

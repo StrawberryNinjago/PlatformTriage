@@ -1,7 +1,7 @@
 package com.example.Triage.controller;
 
+import com.example.Triage.exception.ConnectionNotFoundException;
 import com.example.Triage.handler.DbConnectionHandler;
-import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
 import com.example.Triage.model.request.DbConnectionRequest;
 import com.example.Triage.model.response.ErrorResponse;
 import com.example.Triage.util.LogUtils;
@@ -84,6 +84,21 @@ public class DbConnectionController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse("FLYWAY_HEALTH_FAILED", LogUtils.safeMessage(e)));
+        }
+    }
+
+    @GetMapping("/connections/{connectionId}/flyway/history")
+    public ResponseEntity<?> getFlywayHistory(@RequestParam String connectionId, @RequestParam int limit) {
+        log.info("#getFlywayHistory: Getting flyway history for connectionId: {}", connectionId);
+        try {
+            var resp = connectionHandler.getFlywayHistory(connectionId, limit);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("FLYWAY_HISTORY_FAILED", LogUtils.safeMessage(e)));
         }
     }
 }

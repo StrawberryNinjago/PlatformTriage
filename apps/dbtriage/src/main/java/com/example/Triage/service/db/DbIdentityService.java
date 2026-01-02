@@ -1,7 +1,7 @@
 package com.example.Triage.service.db;
 
 import com.example.Triage.dao.DbQueries;
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.response.DbIdentityResponse;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.stereotype.Service;
@@ -17,7 +17,7 @@ import java.time.OffsetDateTime;
 @Service
 public class DbIdentityService {
 
-    public DbIdentityResponse getIdentity(DbConnectContext ctx) throws SQLException {
+    public DbIdentityResponse getIdentity(DbConnectContextDto ctx) throws SQLException {
         DataSource ds = buildDataSource(ctx);
 
         try (Connection c = ds.getConnection()) {
@@ -54,7 +54,7 @@ public class DbIdentityService {
         }
     }
 
-    private DataSource buildDataSource(DbConnectContext ctx) {
+    private DataSource buildDataSource(DbConnectContextDto ctx) {
         PGSimpleDataSource ds = new PGSimpleDataSource();
         String sslMode = (ctx.sslMode() == null || ctx.sslMode().isBlank()) ? "require" : ctx.sslMode();
 

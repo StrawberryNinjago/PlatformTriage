@@ -2,7 +2,7 @@ import { Box, Typography, Paper, Alert } from '@mui/material';
 
 export default function ConsolePanel({ messages }) {
   return (
-    <Paper sx={{ p: 2, height: '200px', display: 'flex', flexDirection: 'column' }}>
+    <Paper sx={{ p: 2, maxHeight: '250px', display: 'flex', flexDirection: 'column', mt: 2 }}>
       <Typography variant="h6" gutterBottom sx={{ flexShrink: 0 }}>
         Console
       </Typography>
@@ -12,10 +12,9 @@ export default function ConsolePanel({ messages }) {
           display: 'flex', 
           flexDirection: 'column', 
           gap: 1,
-          flex: 1,
+          maxHeight: '180px',
           overflowY: 'auto',
           overflowX: 'hidden',
-          minHeight: 0,
           pr: 1
         }}
       >

@@ -1,11 +1,11 @@
 package com.example.Triage.service.db;
 
 import com.example.Triage.dao.DbQueries;
-import com.example.Triage.model.dto.DbConnectContext;
-import com.example.Triage.model.dto.DbIdentity;
-import com.example.Triage.model.dto.FlywaySummary;
-import com.example.Triage.model.dto.LatestApplied;
-import com.example.Triage.model.dto.SchemaSummary;
+import com.example.Triage.model.dto.DbConnectContextDto;
+import com.example.Triage.model.dto.DbIdentityDto;
+import com.example.Triage.model.dto.FlywaySummaryDto;
+import com.example.Triage.model.dto.LatestAppliedDto;
+import com.example.Triage.model.dto.SchemaSummaryDto;
 import com.example.Triage.model.dto.TableExistence;
 import com.example.Triage.model.response.DbSummaryResponse;
 import lombok.RequiredArgsConstructor;
@@ -34,30 +34,32 @@ public class DbSummaryService {
             "order_item",
             "shipping_info");
 
-    public DbSummaryResponse getSummary(DbConnectContext ctx) throws SQLException {
+    public DbSummaryResponse getSummary(DbConnectContextDto ctx) throws SQLException {
         log.info("#getSummary: Getting summary for context: {}", ctx);
         var ds = dataSourceFactory.build(ctx);
 
         try (var c = ds.getConnection()) {
-            var identity = queryIdentity(c);
+            var identity = queryIdentity(c, ctx.schema());
             var flywayExists = flywayHistoryExists(c);
 
-            var flyway = new FlywaySummary(
-                    flywayExists,
-                    flywayExists ? queryLatestApplied(c) : null,
-                    flywayExists ? queryFlywayFailedCount(c) : 0);
+            var flyway = FlywaySummaryDto.builder()
+                    .historyTableExists(flywayExists)
+                    .latestApplied(flywayExists ? queryLatestApplied(c) : null)
+                    .failedCount(flywayExists ? queryFlywayFailedCount(c) : 0)
+                    .build();
 
             var publicTableCount = queryPublicTableCount(c);
             var important = queryImportantTablesExistence(c);
-            var schema = new SchemaSummary(
-                    publicTableCount,
-                    important);
+            var schema = SchemaSummaryDto.builder()
+                    .tableCount(publicTableCount)
+                    .importantTables(important)
+                    .build();
             log.info("#getSummary: Summary: {}", schema);
             return new DbSummaryResponse(identity, flyway, schema);
         }
     }
 
-    private DbIdentity queryIdentity(Connection c) throws SQLException {
+    private DbIdentityDto queryIdentity(Connection c, String schema) throws SQLException {
         log.info("#queryIdentity: Querying identity for connection: {}", c);
         try (var ps = c.prepareStatement(DbQueries.GET_IDENTITY);
                 var rs = ps.executeQuery()) {
@@ -72,8 +74,17 @@ public class DbSummaryService {
             var serverTime = ts == null
                     ? null
                     : OffsetDateTime.ofInstant(ts.toInstant(), ZoneId.systemDefault());
-            log.info("#queryIdentity: Identity: {}", new DbIdentity(db, usr, addr, port, ver, serverTime));
-            return new DbIdentity(db, usr, addr, port, ver, serverTime);
+            var identity = DbIdentityDto.builder()
+                    .database(db)
+                    .currentUser(usr)
+                    .serverAddr(addr)
+                    .serverPort(port)
+                    .serverVersion(ver)
+                    .serverTime(serverTime)
+                    .schema(schema)
+                    .build();
+            log.info("#queryIdentity: Identity: {}", identity);
+            return identity;
         }
     }
 
@@ -85,7 +96,7 @@ public class DbSummaryService {
         }
     }
 
-    private LatestApplied queryLatestApplied(Connection c) throws SQLException {
+    private LatestAppliedDto queryLatestApplied(Connection c) throws SQLException {
         log.info("#queryLatestApplied: Querying latest applied for connection: {}", c);
         try (var ps = c.prepareStatement(DbQueries.GET_LATEST_APPLIED);
                 var rs = ps.executeQuery()) {
@@ -103,9 +114,18 @@ public class DbSummaryService {
             var installedOn = ts == null
                     ? null
                     : OffsetDateTime.ofInstant(ts.toInstant(), ZoneId.systemDefault());
-            log.info("#queryLatestApplied: Latest applied: {}",
-                    new LatestApplied(rank, version, description, script, installedOn));
-            return new LatestApplied(rank, version, description, script, installedOn);
+            var installedBy = rs.getString("installed_by");
+
+            var latestApplied = LatestAppliedDto.builder()
+                    .installedRank(rank)
+                    .version(version)
+                    .description(description)
+                    .script(script)
+                    .installedOn(installedOn)
+                    .installedBy(installedBy)
+                    .build();
+            log.info("#queryLatestApplied: Latest applied: {}", latestApplied);
+            return latestApplied;
         }
     }
 
@@ -114,8 +134,10 @@ public class DbSummaryService {
         try (var ps = c.prepareStatement(DbQueries.GET_FLYWAY_FAILED_COUNT);
                 var rs = ps.executeQuery()) {
             rs.next();
-            log.info("#queryFlywayFailedCount: Flyway failed count: {}", rs.getInt("cnt"));
-            return rs.getInt("cnt");
+
+            var failedCount = rs.getInt("cnt");
+            log.info("#queryFlywayFailedCount: Flyway failed count: {}", failedCount);
+            return failedCount;
         }
     }
 
@@ -124,8 +146,12 @@ public class DbSummaryService {
         try (var ps = c.prepareStatement(DbQueries.GET_PUBLIC_TABLE_COUNT);
                 var rs = ps.executeQuery()) {
             rs.next();
-            log.info("#queryPublicTableCount: Public table count: {}", rs.getInt("cnt"));
-            return rs.getInt("cnt");
+            var tableCount = rs.getInt("cnt");
+            log.info("#queryPublicTableCount: Public table count: {}", tableCount);
+            return tableCount;
+        } catch (SQLException e) {
+            log.error("#queryPublicTableCount: Error querying public table count: {}", e.getMessage());
+            throw e;
         }
     }
 

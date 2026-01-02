@@ -4,7 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.stereotype.Component;
 
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 
 import javax.sql.DataSource;
 
@@ -12,7 +12,7 @@ import javax.sql.DataSource;
 @RequiredArgsConstructor
 public class DbDataSourceFactory {
 
-    public DataSource build(DbConnectContext ctx) {
+    public DataSource build(DbConnectContextDto ctx) {
         PGSimpleDataSource ds = new PGSimpleDataSource();
 
         String sslMode = (ctx.sslMode() == null || ctx.sslMode().isBlank())

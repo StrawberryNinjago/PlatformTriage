@@ -2,13 +2,13 @@ package com.example.Triage.handler;
 
 import org.springframework.stereotype.Component;
 
+import com.example.Triage.exception.ConnectionNotFoundException;
+import com.example.Triage.exception.InvalidTableException;
+import com.example.Triage.exception.PrivilegesCheckFailedException;
 import com.example.Triage.model.response.DbPrivilegesResponse;
 import com.example.Triage.service.db.DbConnectionRegistry;
 import com.example.Triage.service.db.DbPrivilegesService;
 import com.example.Triage.util.LogUtils;
-import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
-import com.example.Triage.model.errorhandling.InvalidTableException;
-import com.example.Triage.model.errorhandling.PrivilegesCheckFailedException;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

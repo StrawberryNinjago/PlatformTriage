@@ -19,6 +19,9 @@ export const apiService = {
   getFlywayHealth: (connectionId) => 
     axios.get(`${API_BASE}/flyway/health`, { params: { connectionId } }),
   
+  getFlywayHistory: (connectionId, limit = 50) =>
+    axios.get(`${API_BASE}/connections/${connectionId}/flyway/history`, { params: { connectionId, limit } }),
+  
   // Tables
   getTables: (connectionId, schema) => 
     axios.get(`${API_BASE}/tables`, { params: { connectionId, schema } }),

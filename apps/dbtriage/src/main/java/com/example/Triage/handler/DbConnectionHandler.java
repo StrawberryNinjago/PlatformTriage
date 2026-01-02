@@ -2,7 +2,7 @@ package com.example.Triage.handler;
 
 import org.springframework.stereotype.Component;
 
-import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
+import com.example.Triage.exception.ConnectionNotFoundException;
 import com.example.Triage.model.request.DbConnectionRequest;
 import com.example.Triage.model.response.DbConnectionResponse;
 import com.example.Triage.model.response.DbFlywayHealthResponse;
@@ -14,7 +14,8 @@ import com.example.Triage.service.db.DbFlywayService;
 import com.example.Triage.service.db.DbIdentityService;
 import com.example.Triage.service.db.DbSummaryService;
 import com.example.Triage.util.DbConnectionUtils;
-
+import com.example.Triage.model.dto.FlywayHistoryRowDto;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -86,6 +87,19 @@ public class DbConnectionHandler {
         } catch (Exception e) {
             log.error("#getFlywayHealth: Flyway health retrieval failed for connectionId: {}", connectionId, e);
             throw new ConnectionNotFoundException("FLYWAY_HEALTH_FAILED.");
+        }
+    }
+
+    public List<FlywayHistoryRowDto> getFlywayHistory(String connectionId, int limit) {
+        log.info("#getFlywayHistory: Getting flyway history for connectionId: {}", connectionId);
+        var ctx = DbConnectionUtils.getCtx(registry, connectionId);
+        try {
+            var resp = flywayService.getFlywayHistory(ctx, limit);
+            log.info("#getFlywayHistory: Flyway history retrieved successfully for connectionId: {}", connectionId);
+            return resp;
+        } catch (Exception e) {
+            log.error("#getFlywayHistory: Flyway history retrieval failed for connectionId: {}", connectionId, e);
+            throw new ConnectionNotFoundException("FLYWAY_HISTORY_FAILED.");
         }
     }
 }

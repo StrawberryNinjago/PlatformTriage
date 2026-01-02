@@ -5,10 +5,11 @@ import java.time.OffsetDateTime;
 import lombok.Builder;
 
 @Builder
-public record LatestApplied(
+public record LatestAppliedDto(
                 Integer installedRank,
                 String version,
                 String description,
                 String script,
-                OffsetDateTime installedOn) {
+                OffsetDateTime installedOn,
+                String installedBy) {
 }

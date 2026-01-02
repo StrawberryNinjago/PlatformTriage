@@ -2,7 +2,7 @@ package com.example.Triage.service.db;
 
 import org.springframework.stereotype.Component;
 
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -19,12 +19,12 @@ public class DbConnectionRegistry {
 
     private static final Duration TTL = Duration.ofMinutes(15);
 
-    private final Map<String, DbConnectContext> store = new ConcurrentHashMap<>();
+    private final Map<String, DbConnectContextDto> store = new ConcurrentHashMap<>();
 
-    public DbConnectContext create(String host, int port, String database, String username, String password,
+    public DbConnectContextDto create(String host, int port, String database, String username, String password,
             String sslMode, String schema) {
         String id = "pt-" + UUID.randomUUID();
-        var ctx = new DbConnectContext(
+        var ctx = new DbConnectContextDto(
                 id, host, port, database, username, password,
                 (sslMode == null || sslMode.isBlank()) ? "require" : sslMode,
                 (schema == null || schema.isBlank()) ? "public" : schema,
@@ -33,7 +33,7 @@ public class DbConnectionRegistry {
         return ctx;
     }
 
-    public Optional<DbConnectContext> get(String id) {
+    public Optional<DbConnectContextDto> get(String id) {
         var ctx = store.get(id);
         if (ctx == null)
             return Optional.empty();

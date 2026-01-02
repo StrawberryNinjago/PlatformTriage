@@ -1,4 +1,4 @@
-package com.example.Triage.model.errorhandling;
+package com.example.Triage.exception;
 
 public class ConnectionNotFoundException extends RuntimeException {
     public ConnectionNotFoundException(String message) {

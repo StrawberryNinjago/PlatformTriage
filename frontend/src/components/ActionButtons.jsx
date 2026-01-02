@@ -14,13 +14,30 @@ export default function ActionButtons({
 }) {
   const [tableName, setTableName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeAction, setActiveAction] = useState(null);
 
   const handleAction = (actionName, requiresTable = false) => {
     if (requiresTable && !tableName) {
       alert('Please enter a table name');
       return;
     }
+    
+    // Set the active action for visual feedback (stays highlighted until another action is clicked)
+    setActiveAction(actionName);
+    
     onAction(actionName, { tableName, searchQuery });
+  };
+
+  const getButtonStyle = (actionName) => {
+    if (activeAction === actionName) {
+      return {
+        boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.3)',
+        borderWidth: '2px',
+        fontWeight: 'bold',
+        transition: 'all 0.2s ease',
+      };
+    }
+    return {};
   };
 
   return (
@@ -36,31 +53,34 @@ export default function ActionButtons({
         </Typography>
 
         <Button
-          variant="outlined"
+          variant={activeAction === 'verify-connection' ? 'contained' : 'outlined'}
           onClick={() => handleAction('verify-connection')}
           disabled={!isConnected}
           fullWidth
           size="small"
+          sx={getButtonStyle('verify-connection')}
         >
           Verify Connection
         </Button>
 
         <Button
-          variant="outlined"
+          variant={activeAction === 'flyway-health' ? 'contained' : 'outlined'}
           onClick={() => handleAction('flyway-health')}
           disabled={!isConnected}
           fullWidth
           size="small"
+          sx={getButtonStyle('flyway-health')}
         >
           Flyway Health
         </Button>
 
         <Button
-          variant="outlined"
+          variant={activeAction === 'list-tables' ? 'contained' : 'outlined'}
           onClick={() => handleAction('list-tables')}
           disabled={!isConnected}
           fullWidth
           size="small"
+          sx={getButtonStyle('list-tables')}
         >
           List All Tables
         </Button>
@@ -91,16 +111,18 @@ export default function ActionButtons({
           disabled={!isConnected || !tableName}
           fullWidth
           size="small"
+          sx={getButtonStyle('table-details')}
         >
           Show Table Details
         </Button>
 
         <Button
-          variant="outlined"
+          variant={activeAction === 'check-ownership' ? 'contained' : 'outlined'}
           onClick={() => handleAction('check-ownership', true)}
           disabled={!isConnected || !tableName}
           fullWidth
           size="small"
+          sx={getButtonStyle('check-ownership')}
         >
           Check Ownership & Grants
         </Button>
@@ -127,11 +149,12 @@ export default function ActionButtons({
 
         <Button
           variant="contained"
-          color="success"
+          color={activeAction === 'find-table' ? 'primary' : 'success'}
           onClick={() => handleAction('find-table')}
           disabled={!isConnected || !searchQuery}
           fullWidth
           size="small"
+          sx={activeAction === 'find-table' ? getButtonStyle('find-table') : {}}
         >
           Search Tables
         </Button>

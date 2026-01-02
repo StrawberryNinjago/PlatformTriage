@@ -1,11 +1,11 @@
 package com.example.Triage.model.response;
 
-import com.example.Triage.model.dto.DbIdentity;
-import com.example.Triage.model.dto.FlywaySummary;
-import com.example.Triage.model.dto.SchemaSummary;
+import com.example.Triage.model.dto.DbIdentityDto;
+import com.example.Triage.model.dto.FlywaySummaryDto;
+import com.example.Triage.model.dto.SchemaSummaryDto;
 
 public record DbSummaryResponse(
-        DbIdentity identity,
-        FlywaySummary flyway,
-        SchemaSummary publicSchema) {
+                DbIdentityDto identity,
+                FlywaySummaryDto flyway,
+                SchemaSummaryDto publicSchema) {
 }

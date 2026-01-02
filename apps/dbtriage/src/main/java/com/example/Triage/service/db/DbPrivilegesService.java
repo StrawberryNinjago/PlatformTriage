@@ -2,7 +2,7 @@ package com.example.Triage.service.db;
 
 import com.example.Triage.model.response.DbPrivilegesResponse;
 import com.example.Triage.dao.DbQueries;
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.enums.ValidationStatus;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -24,7 +24,7 @@ public class DbPrivilegesService {
     private static final List<String> EXPECTED_PRIVILEGES = Arrays.asList(
             "SELECT", "INSERT", "UPDATE", "DELETE");
 
-    public DbPrivilegesResponse checkPrivileges(DbConnectContext ctx, String schema, String table)
+    public DbPrivilegesResponse checkPrivileges(DbConnectContextDto ctx, String schema, String table)
             throws SQLException {
         DataSource ds = buildDataSource(ctx);
 
@@ -122,7 +122,7 @@ public class DbPrivilegesService {
         return privileges;
     }
 
-    private DataSource buildDataSource(DbConnectContext ctx) {
+    private DataSource buildDataSource(DbConnectContextDto ctx) {
         PGSimpleDataSource ds = new PGSimpleDataSource();
         String sslMode = (ctx.sslMode() == null || ctx.sslMode().isBlank()) ? "require" : ctx.sslMode();
 

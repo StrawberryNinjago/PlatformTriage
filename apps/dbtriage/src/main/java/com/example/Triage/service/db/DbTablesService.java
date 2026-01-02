@@ -2,7 +2,7 @@ package com.example.Triage.service.db;
 
 import com.example.Triage.model.response.DbTablesResponse;
 import com.example.Triage.dao.DbQueries;
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.dto.TableInfo;
 import com.example.Triage.model.response.DbTableSearchResponse;
 import org.postgresql.ds.PGSimpleDataSource;
@@ -16,7 +16,7 @@ import java.util.List;
 @Service
 public class DbTablesService {
 
-    public DbTablesResponse listTables(DbConnectContext ctx, String schema) throws SQLException {
+    public DbTablesResponse listTables(DbConnectContextDto ctx, String schema) throws SQLException {
         DataSource ds = buildDataSource(ctx);
 
         try (var c = ds.getConnection()) {
@@ -37,7 +37,7 @@ public class DbTablesService {
         }
     }
 
-    public DbTableSearchResponse searchTables(DbConnectContext ctx, String schema, String query) throws SQLException {
+    public DbTableSearchResponse searchTables(DbConnectContextDto ctx, String schema, String query) throws SQLException {
         var ds = buildDataSource(ctx);
 
         try (var c = ds.getConnection()) {
@@ -59,7 +59,7 @@ public class DbTablesService {
         }
     }
 
-    private DataSource buildDataSource(DbConnectContext ctx) {
+    private DataSource buildDataSource(DbConnectContextDto ctx) {
         var ds = new PGSimpleDataSource();
         var sslMode = (ctx.sslMode() == null || ctx.sslMode().isBlank()) ? "require" : ctx.sslMode();
 

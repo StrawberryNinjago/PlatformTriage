@@ -1,7 +1,7 @@
 package com.example.Triage.service.db;
 
 import com.example.Triage.dao.DbQueries;
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.dto.DbIndex;
 import com.example.Triage.model.enums.ValidationStatus;
 import com.example.Triage.model.response.DbIndexResponse;
@@ -22,7 +22,7 @@ public class DbIndexService {
 
         private final DbDataSourceFactory dataSourceFactory;
 
-        public DbIndexResponse listIndexes(DbConnectContext ctx, String schema, String table) throws SQLException {
+        public DbIndexResponse listIndexes(DbConnectContextDto ctx, String schema, String table) throws SQLException {
                 var ds = dataSourceFactory.build(ctx);
 
                 List<DbIndex> indexes = new ArrayList<>();
@@ -64,7 +64,7 @@ public class DbIndexService {
                 return DbIndexResponse.builder().schema(schema).table(table).indexes(indexes).build();
         }
 
-        public IndexCoverageResponse indexCoverage(DbConnectContext ctx, String schema, String table,
+        public IndexCoverageResponse indexCoverage(DbConnectContextDto ctx, String schema, String table,
                         List<String> columns, boolean requireUnique) throws SQLException {
 
                 var inv = listIndexes(ctx, schema, table);

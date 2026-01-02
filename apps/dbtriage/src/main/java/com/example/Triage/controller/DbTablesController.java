@@ -1,7 +1,7 @@
 package com.example.Triage.controller;
 
+import com.example.Triage.exception.ConnectionNotFoundException;
 import com.example.Triage.handler.DbTablesHandler;
-import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
 import com.example.Triage.model.response.ErrorResponse;
 import com.example.Triage.util.LogUtils;
 

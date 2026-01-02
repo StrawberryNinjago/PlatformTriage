@@ -2,7 +2,7 @@ package com.example.Triage.handler;
 
 import org.springframework.stereotype.Component;
 
-import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
+import com.example.Triage.exception.ConnectionNotFoundException;
 import com.example.Triage.model.response.DbIndexResponse;
 import com.example.Triage.model.response.DbTableIntrospectResponse;
 import com.example.Triage.model.response.DbTableSearchResponse;

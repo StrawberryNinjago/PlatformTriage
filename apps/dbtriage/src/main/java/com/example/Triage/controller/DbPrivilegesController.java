@@ -1,9 +1,6 @@
 package com.example.Triage.controller;
 
 import com.example.Triage.model.enums.DbSchema;
-import com.example.Triage.model.errorhandling.ConnectionNotFoundException;
-import com.example.Triage.model.errorhandling.InvalidTableException;
-import com.example.Triage.model.errorhandling.PrivilegesCheckFailedException;
 import com.example.Triage.model.request.DbPrivilegesRequest;
 import com.example.Triage.model.response.ErrorResponse;
 import com.example.Triage.util.LogUtils;
@@ -18,6 +15,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.example.Triage.exception.ConnectionNotFoundException;
+import com.example.Triage.exception.InvalidTableException;
+import com.example.Triage.exception.PrivilegesCheckFailedException;
 import com.example.Triage.handler.DbPrivilegesHandler;
 
 @RestController

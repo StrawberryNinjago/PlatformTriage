@@ -3,7 +3,7 @@ package com.example.Triage.service.db;
 import org.postgresql.ds.PGSimpleDataSource;
 import org.springframework.stereotype.Service;
 
-import com.example.Triage.model.dto.DbConnectContext;
+import com.example.Triage.model.dto.DbConnectContextDto;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -13,7 +13,7 @@ import java.sql.ResultSet;
 @Service
 public class DbConnectionService {
 
-    public void testConnection(DbConnectContext ctx) throws Exception {
+    public void testConnection(DbConnectContextDto ctx) throws Exception {
         DataSource ds = buildDataSource(ctx);
 
         try (Connection c = ds.getConnection();
@@ -26,7 +26,7 @@ public class DbConnectionService {
         }
     }
 
-    private DataSource buildDataSource(DbConnectContext ctx) {
+    private DataSource buildDataSource(DbConnectContextDto ctx) {
         PGSimpleDataSource ds = new PGSimpleDataSource();
 
         // URL with sslmode=require by default (Azure Postgres typically needs SSL)

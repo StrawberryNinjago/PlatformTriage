@@ -76,7 +76,7 @@ function App() {
         case 'flyway-health':
           response = await apiService.getFlywayHealth(connectionId);
           setSummaryData(prev => ({ ...prev, flyway: response.data }));
-          addConsoleMessage(`✓ Flyway health: ${response.data.status}`, 
+          addConsoleMessage(`✓ Flyway health: ${response.data.status}`,
             response.data.status === 'HEALTHY' ? 'success' : 'warning');
           break;
 
@@ -93,7 +93,7 @@ function App() {
         case 'check-ownership':
           response = await apiService.getPrivileges(connectionId, schema, params.tableName);
           setSummaryData(prev => ({ ...prev, privileges: response.data }));
-          addConsoleMessage(`✓ Privileges checked: ${response.data.status}`, 
+          addConsoleMessage(`✓ Privileges checked: ${response.data.status}`,
             response.data.status === 'PASS' ? 'success' : 'warning');
           break;
 
@@ -131,49 +131,50 @@ function App() {
           </Container>
         </Box>
 
-        <Container maxWidth="xl" sx={{ mt: 3, pb: 3, height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <Grid container spacing={3} sx={{ flex: 1, minHeight: 0 }}>
-              {/* Left Panel */}
-              <Grid item xs={12} md={4} sx={{ display: 'flex', flexDirection: 'column' }}>
-                <Paper elevation={2}>
-                  <ConnectionForm
-                    onConnect={handleConnect}
-                    onLoadSummary={handleLoadSummary}
-                    isConnected={connectionStatus === 'connected'}
-                  />
-                </Paper>
-
-                <Paper elevation={2} sx={{ mt: 2, flex: 1, overflow: 'auto' }}>
-                  <ActionButtons
-                    isConnected={connectionStatus === 'connected'}
-                    schema={schema}
-                    onAction={handleAction}
-                  />
-                </Paper>
-              </Grid>
-
-              {/* Right Panel */}
-              <Grid item xs={12} md={8} sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <SummaryPanel
-                  connectionStatus={connectionStatus}
-                  summaryData={summaryData}
+        <Container maxWidth="xl" sx={{ mt: 3, pb: 3 }}>
+          <Grid container spacing={3} sx={{ flexWrap: 'nowrap' }}>
+            {/* Left Panel */}
+            <Grid item sx={{ width: '33.33%', minWidth: '33.33%', maxWidth: '33.33%' }}>
+              <Paper elevation={2}>
+                <ConnectionForm
+                  onConnect={handleConnect}
+                  onLoadSummary={handleLoadSummary}
+                  isConnected={connectionStatus === 'connected'}
                 />
+              </Paper>
 
-                <Box sx={{ flex: 1, minHeight: 0 }}>
-                  <ResultsPanel
-                    results={results}
-                    onClear={() => setResults(null)}
-                  />
-                </Box>
-              </Grid>
+              <Paper elevation={2} sx={{ mt: 2, maxHeight: '400px', overflow: 'auto' }}>
+                <ActionButtons
+                  isConnected={connectionStatus === 'connected'}
+                  schema={schema}
+                  onAction={handleAction}
+                />
+              </Paper>
             </Grid>
 
-            {/* Console Panel - Fixed at Bottom */}
-            <Box sx={{ mt: 2, flexShrink: 0 }}>
+            {/* Right Panel */}
+            <Grid item sx={{ width: '66.67%', minWidth: '66.67%', maxWidth: '66.67%' }}>
+              <SummaryPanel
+                connectionStatus={connectionStatus}
+                summaryData={summaryData}
+              />
+
+              <Box sx={{ mt: 2 }}>
+                <ResultsPanel
+                  results={results}
+                  onClear={() => setResults(null)}
+                  connectionId={connectionId}
+                />
+              </Box>
+            </Grid>
+          </Grid>
+
+          {/* Console Panel - Full Width at Bottom */}
+          <Grid container spacing={3} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
               <ConsolePanel messages={consoleMessages} />
-            </Box>
-          </Box>
+            </Grid>
+          </Grid>
         </Container>
       </Box>
     </ThemeProvider>

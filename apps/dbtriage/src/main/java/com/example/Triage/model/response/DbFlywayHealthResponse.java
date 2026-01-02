@@ -1,12 +1,19 @@
 package com.example.Triage.model.response;
 
-import com.example.Triage.model.dto.LatestApplied;
+import com.example.Triage.model.dto.DbIdentityDto;
+import com.example.Triage.model.dto.FlywayWarningDto;
+import com.example.Triage.model.dto.FlywaySummaryDto;
 import com.example.Triage.model.enums.FlywayStatus;
 
+import java.util.List;
+import lombok.Builder;
+
+@Builder
 public record DbFlywayHealthResponse(
         FlywayStatus status,
-        boolean historyTableExists,
-        LatestApplied latestApplied,
-        int failedCount,
-        String message) {
+        FlywaySummaryDto flywaySummary,
+        DbIdentityDto identity,
+        String message,
+        String expectedUser,
+        List<FlywayWarningDto> warnings) {
 }
