@@ -11,6 +11,17 @@ import lombok.Builder;
 public record DbTableIntrospectResponse(
                 String schema,
                 String table,
+                String owner,
+                String currentUser,
                 List<DbIndex> indexes,
-                List<DbConstraint> constraints) {
+                List<DbConstraint> constraints,
+                FlywayMigrationInfo flywayInfo) {
+        
+        @Builder
+        public record FlywayMigrationInfo(
+                String installedBy,
+                String installedOn,
+                String version,
+                String description) {
+        }
 }

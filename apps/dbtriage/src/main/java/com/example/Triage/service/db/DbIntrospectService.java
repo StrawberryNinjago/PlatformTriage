@@ -40,7 +40,10 @@ public class DbIntrospectService {
         try (var conn = ds.getConnection()) {
             var indexes = indexService.listIndexes(ctx, schema, table).indexes();
             var constraints = queryConstraints(conn, schema, table);
-            return new DbTableIntrospectResponse(schema, table, indexes, constraints);
+            var owner = queryTableOwner(conn, schema, table);
+            var currentUser = queryCurrentUser(conn);
+            var flywayInfo = queryFlywayInfoForTable(conn, schema, table);
+            return new DbTableIntrospectResponse(schema, table, owner, currentUser, indexes, constraints, flywayInfo);
         }
     }
 
@@ -89,5 +92,77 @@ public class DbIntrospectService {
             case "x" -> "EXCLUSION";
             default -> "OTHER(" + contype + ")";
         };
+    }
+
+    private String queryTableOwner(Connection conn, String schema, String table) throws SQLException {
+        String sql = "SELECT tableowner FROM pg_tables WHERE schemaname = ? AND tablename = ?";
+        try (var ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            try (var rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("tableowner");
+                }
+            }
+        }
+        return null;
+    }
+
+    private String queryCurrentUser(Connection conn) throws SQLException {
+        String sql = "SELECT current_user";
+        try (var ps = conn.prepareStatement(sql)) {
+            try (var rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString(1);
+                }
+            }
+        }
+        return null;
+    }
+
+    private DbTableIntrospectResponse.FlywayMigrationInfo queryFlywayInfoForTable(Connection conn, String schema, String table) {
+        try {
+            // First check if flyway_schema_history table exists
+            String checkSql = "SELECT to_regclass('public.flyway_schema_history') AS flyway_table";
+            try (var ps = conn.prepareStatement(checkSql)) {
+                try (var rs = ps.executeQuery()) {
+                    if (!rs.next() || rs.getString("flyway_table") == null) {
+                        return null;
+                    }
+                }
+            }
+
+            // Look for migrations that might have created this table
+            // We look for script names that contain the table name
+            String sql = """
+                SELECT version, description, script, installed_by, installed_on
+                FROM public.flyway_schema_history
+                WHERE success = true
+                  AND (script ILIKE ? OR description ILIKE ?)
+                ORDER BY installed_rank DESC
+                LIMIT 1
+                """;
+            
+            try (var ps = conn.prepareStatement(sql)) {
+                String searchPattern = "%" + table + "%";
+                ps.setString(1, searchPattern);
+                ps.setString(2, searchPattern);
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return DbTableIntrospectResponse.FlywayMigrationInfo.builder()
+                            .version(rs.getString("version"))
+                            .description(rs.getString("description"))
+                            .installedBy(rs.getString("installed_by"))
+                            .installedOn(rs.getTimestamp("installed_on") != null ? 
+                                rs.getTimestamp("installed_on").toString() : null)
+                            .build();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // If anything fails, just return null (Flyway not configured or table not found)
+            return null;
+        }
+        return null;
     }
 }

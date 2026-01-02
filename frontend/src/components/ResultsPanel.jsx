@@ -16,6 +16,7 @@ import {
 } from '@mui/material';
 import { Clear, TableChart, Code } from '@mui/icons-material';
 import FlywayHealthPanel from './FlywayHealthPanel';
+import TableDiagnosticsPanel from './TableDiagnosticsPanel';
 
 export default function ResultsPanel({ results, onClear, connectionId }) {
   const [viewMode, setViewMode] = useState('table'); // 'table' or 'json'
@@ -37,6 +38,9 @@ export default function ResultsPanel({ results, onClear, connectionId }) {
   const isSummary = results?.identity && results?.flyway;
   const isTableDetails = results?.indexes && results?.constraints && results?.schema && results?.table;
   const isIndexesOnly = results?.indexes && !results?.constraints && results?.schema && results?.table;
+  
+  // Determine which schema to use for API calls
+  const effectiveSchema = results?.schema || 'public';
 
   const renderTablesView = (data) => {
     const tables = data.tables || [];
@@ -739,7 +743,7 @@ export default function ResultsPanel({ results, onClear, connectionId }) {
               {isIdentity && renderIdentityView(results)}
               {isConnection && renderConnectionView(results)}
               {isSummary && renderSummaryView(results)}
-              {isTableDetails && renderTableDetailsView(results)}
+              {isTableDetails && <TableDiagnosticsPanel data={results} connectionId={connectionId} schema={effectiveSchema} />}
               {isIndexesOnly && renderIndexesOnlyView(results)}
             </Box>
           ) : (

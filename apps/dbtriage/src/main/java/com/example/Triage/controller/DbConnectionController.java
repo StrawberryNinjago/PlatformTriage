@@ -2,7 +2,9 @@ package com.example.Triage.controller;
 
 import com.example.Triage.exception.ConnectionNotFoundException;
 import com.example.Triage.handler.DbConnectionHandler;
+import com.example.Triage.handler.DbPrivilegesHandler;
 import com.example.Triage.model.request.DbConnectionRequest;
+import com.example.Triage.model.request.DbPrivilegesRequest;
 import com.example.Triage.model.response.ErrorResponse;
 import com.example.Triage.util.LogUtils;
 
@@ -26,6 +28,7 @@ import lombok.extern.slf4j.Slf4j;
 public class DbConnectionController {
 
     private final DbConnectionHandler connectionHandler;
+    private final DbPrivilegesHandler privilegesHandler;
 
     @PostMapping("/connections")
     public ResponseEntity<?> createConnection(@Valid @RequestBody DbConnectionRequest req) {
@@ -99,6 +102,29 @@ public class DbConnectionController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(new ErrorResponse("FLYWAY_HISTORY_FAILED", LogUtils.safeMessage(e)));
+        }
+    }
+
+    @PostMapping("/privileges:check")
+    public ResponseEntity<?> checkPrivileges(@Valid @RequestBody DbPrivilegesRequest req) {
+        log.info("#checkPrivileges: Checking privileges for connectionId: {}, schema: {}, table: {}",
+                req.connectionId(), req.schema(), req.tableName());
+        try {
+            // Resolve schema name
+            String schemaName = req.schemaName() != null ? req.schemaName() : "public";
+            
+            var resp = privilegesHandler.checkTablePrivileges(
+                    req.connectionId(),
+                    schemaName,
+                    req.tableName()
+            );
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("PRIVILEGES_CHECK_FAILED", LogUtils.safeMessage(e)));
         }
     }
 }

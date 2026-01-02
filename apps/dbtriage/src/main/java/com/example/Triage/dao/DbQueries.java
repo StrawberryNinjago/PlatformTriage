@@ -154,7 +154,7 @@ public class DbQueries {
   public static final String GET_TABLE_OWNER = """
       SELECT tableowner
       FROM pg_tables
-      WHERE schemaname = :schema AND tablename = :table
+      WHERE schemaname = ? AND tablename = ?
       """;
 
   public static final String GET_CURRENT_USER = """
