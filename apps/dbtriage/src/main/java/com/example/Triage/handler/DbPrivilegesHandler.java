@@ -1,13 +1,20 @@
 package com.example.Triage.handler;
 
+import java.sql.SQLException;
+import java.util.Map;
+
 import org.springframework.stereotype.Component;
 
 import com.example.Triage.exception.ConnectionNotFoundException;
+import com.example.Triage.exception.DbPrivilegesCheckException;
 import com.example.Triage.exception.InvalidTableException;
 import com.example.Triage.exception.PrivilegesCheckFailedException;
+import com.example.Triage.model.dto.DbConnectContextDto;
+import com.example.Triage.model.dto.DbPrivilegeSummaryDto;
 import com.example.Triage.model.response.DbPrivilegesResponse;
 import com.example.Triage.service.db.DbConnectionRegistry;
-import com.example.Triage.service.db.DbPrivilegesService;
+import com.example.Triage.service.db.preivilege.DbPrivilegesService;
+import com.example.Triage.service.db.preivilege.DbTablePrivilegesService;
 import com.example.Triage.util.LogUtils;
 
 import lombok.RequiredArgsConstructor;
@@ -20,30 +27,49 @@ public class DbPrivilegesHandler {
 
     private final DbConnectionRegistry registry;
     private final DbPrivilegesService privilegesService;
+    private final DbTablePrivilegesService tablePrivilegesService;
 
-    public DbPrivilegesResponse checkPrivileges(String connectionId, String schema, String table) throws Exception {
-        log.info("#checkPrivileges: Checking privileges for connectionId: {}, schema: {}, table: {}", connectionId,
-                schema, table);
-        var ctx = registry.get(connectionId).orElse(null);
-        if (ctx == null) {
-            log.error("#checkPrivileges: Connection not found or expired for connectionId: {}", connectionId);
-            throw new ConnectionNotFoundException("Connection not found or expired. Please connect again.");
+    public DbPrivilegeSummaryDto getPrivilegesSummary(String connectionId) {
+        log.info("#getPrivilegesSummary: connectionId={}", connectionId);
+
+        DbConnectContextDto ctx = registry.get(connectionId)
+                .orElseThrow(() -> new ConnectionNotFoundException("CONNECTION_NOT_FOUND"));
+
+        try {
+            return privilegesService.getPrivileges(ctx);
+        } catch (SQLException e) {
+            log.error("#getPrivilegesSummary: SQL failure connectionId={}", connectionId, e);
+            throw new DbPrivilegesCheckException("DB_PRIVILEGES_SUMMARY_SQL_FAILED", e,
+                    Map.of("connectionId", connectionId));
+        } catch (Exception e) {
+            log.error("#getPrivilegesSummary: Unexpected failure connectionId={}", connectionId, e);
+            throw new DbPrivilegesCheckException(
+                    "DB_PRIVILEGES_SUMMARY_FAILED", e, Map.of("connectionId", connectionId));
         }
+    }
+
+    public DbPrivilegesResponse checkTablePrivileges(String connectionId, String schema, String table) {
+        log.info("#checkTablePrivileges: connectionId={}, schema={}, table={}", connectionId, schema, table);
+
+        DbConnectContextDto ctx = registry.get(connectionId)
+                .orElseThrow(() -> new ConnectionNotFoundException("CONNECTION_NOT_FOUND"));
 
         if (table == null || table.isBlank()) {
-            log.error("#checkPrivileges: Table name is required for connectionId: {}", connectionId);
             throw new InvalidTableException("Table name is required.");
         }
 
+        String resolvedSchema = (schema == null || schema.isBlank()) ? "public" : schema;
+
         try {
-            var resp = privilegesService.checkPrivileges(ctx, schema, table);
-            log.info("#checkPrivileges: Privileges checked successfully for connectionId: {}, schema: {}, table: {}",
-                    connectionId, schema, table);
-            return resp;
+            return tablePrivilegesService.checkTablePrivileges(ctx, resolvedSchema, table);
+        } catch (SQLException e) {
+            log.error("#checkTablePrivileges: SQL failure connectionId={}, schema={}, table={}",
+                    connectionId, resolvedSchema, table, e);
+            throw new PrivilegesCheckFailedException("DB_TABLE_PRIVILEGES_SQL_FAILED", e);
         } catch (Exception e) {
-            log.error("#checkPrivileges: Privileges check failed for connectionId: {}, schema: {}, table: {}",
-                    connectionId, schema, table, e);
-            throw new PrivilegesCheckFailedException(LogUtils.safeMessage(e));
+            log.error("#checkTablePrivileges: Unexpected failure connectionId={}, schema={}, table={}",
+                    connectionId, resolvedSchema, table, e);
+            throw new PrivilegesCheckFailedException(LogUtils.safeMessage(e), e);
         }
     }
 }

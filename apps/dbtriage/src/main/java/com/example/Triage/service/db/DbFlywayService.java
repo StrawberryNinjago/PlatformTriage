@@ -5,7 +5,7 @@ import com.example.Triage.exception.FlywayHealthCheckException;
 import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.dto.DbIdentityDto;
 import com.example.Triage.model.dto.FlywayHistoryRowDto;
-import com.example.Triage.model.dto.FlywayWarningDto;
+import com.example.Triage.model.dto.WarningMessageDto;
 import com.example.Triage.model.dto.LatestAppliedDto;
 import com.example.Triage.model.enums.FlywayStatus;
 import com.example.Triage.model.response.DbFlywayHealthResponse;
@@ -262,8 +262,8 @@ public class DbFlywayService {
         return ts != null ? ts.toInstant().atOffset(ZoneOffset.UTC) : null;
     }
 
-    private List<FlywayWarningDto> computeWarnings(FlywaySummaryDto summary, DbIdentityDto identity) {
-        List<FlywayWarningDto> warnings = new ArrayList<>();
+    private List<WarningMessageDto> computeWarnings(FlywaySummaryDto summary, DbIdentityDto identity) {
+        List<WarningMessageDto> warnings = new ArrayList<>();
 
         // Check for multiple installers
         Set<String> installers = summary.installedBySummary().stream()
@@ -271,7 +271,7 @@ public class DbFlywayService {
                 .collect(Collectors.toSet());
 
         if (installers.size() > 1) {
-            warnings.add(FlywayWarningDto.builder()
+            warnings.add(WarningMessageDto.builder()
                     .code("MULTIPLE_INSTALLERS")
                     .message(String.format("Migrations were applied by %d different users: %s",
                             installers.size(), String.join(", ", installers)))
@@ -284,7 +284,7 @@ public class DbFlywayService {
             String currentUser = identity.currentUser();
 
             if (!currentUser.equals(latestInstalledBy)) {
-                warnings.add(FlywayWarningDto.builder()
+                warnings.add(WarningMessageDto.builder()
                         .code("CREDENTIAL_DRIFT")
                         .message(String.format(
                                 "Latest migration was installed by %s, but you are connected as %s",
