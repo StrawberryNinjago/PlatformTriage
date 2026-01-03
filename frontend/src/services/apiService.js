@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const API_BASE = 'http://localhost:8081/api/db';
+const SQL_API_BASE = 'http://localhost:8081/api/sql';
 
 export const apiService = {
   // Connection
@@ -46,6 +47,14 @@ export const apiService = {
     axios.get(`${API_BASE}/tables/indexes`, { params: { connectionId, schema, table } }),
   
   getTableIntrospect: (connectionId, schema, table) => 
-    axios.get(`${API_BASE}/tables/introspect`, { params: { connectionId, schema, table } })
+    axios.get(`${API_BASE}/tables/introspect`, { params: { connectionId, schema, table } }),
+  
+  // SQL Analysis
+  analyzeSql: (connectionId, sql, operationType) => 
+    axios.post(`${SQL_API_BASE}/analyze`, {
+      connectionId,
+      sql,
+      operationType
+    })
 };
 

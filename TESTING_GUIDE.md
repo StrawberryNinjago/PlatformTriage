@@ -11,12 +11,12 @@
 ### 1. Connect to Database
 1. Open `http://localhost:5173`
 2. Fill in connection form:
-   - **Host:** `localhost`
-   - **Port:** `5432`
-   - **Database:** `cart`
-   - **Username:** `cart_user` (or `cart_admin`)
-   - **Password:** `cart_password`
-   - **Schema:** `public`
+   - **Host:** 
+   - **Port:** 
+   - **Database:** 
+   - **Username:** 
+   - **Password:** 
+   - **Schema:** 
 3. Click **Connect**
 4. Verify connection success
 

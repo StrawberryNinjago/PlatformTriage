@@ -109,42 +109,42 @@ Frontend:
 │                    TABLE DIAGNOSTICS                        │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  📊 DIAGNOSTICS SUMMARY (30-second answer)                 │
-│  ├─ Clickable status pills                                 │
-│  ├─ Color-coded (green/yellow/red)                         │
-│  └─ Scrolls to relevant section                            │
+│  📊 DIAGNOSTICS SUMMARY (30-second answer)                  │
+│  ├─ Clickable status pills                                  │
+│  ├─ Color-coded (green/yellow/red)                          │
+│  └─ Scrolls to relevant section                             │
 │                                                             │
-│  ⚠️ DRIFT WARNINGS (automatic detection)                   │
-│  ├─ Compares Flyway installer, owner, current user         │
-│  ├─ Shows when credentials don't match                     │
-│  └─ Explains why this causes problems                      │
+│  ⚠️ DRIFT WARNINGS (automatic detection)                    │
+│  ├─ Compares Flyway installer, owner, current user          │
+│  ├─ Shows when credentials don't match                      │
+│  └─ Explains why this causes problems                       │
 │                                                             │
-│  📅 DIAGNOSTIC TIMELINE (tells the story)                  │
-│  ├─ When Flyway migration ran                              │
-│  ├─ Who created the table                                  │
-│  ├─ What permissions are missing                           │
-│  └─ Color-coded events                                     │
+│  📅 DIAGNOSTIC TIMELINE (tells the story)                   │
+│  ├─ When Flyway migration ran                               │
+│  ├─ Who created the table                                   │
+│  ├─ What permissions are missing                            │
+│  └─ Color-coded events                                      │
 │                                                             │
-│  🔐 OWNERSHIP & ACCESS (persistent results)                │
-│  ├─ Pre-check: Button to trigger                           │
-│  ├─ Post-check: Diagnostic table                           │
-│  ├─ Interpretation in plain English                        │
-│  └─ "Why this matters" explanation                         │
+│  🔐 OWNERSHIP & ACCESS (persistent results)                 │
+│  ├─ Pre-check: Button to trigger                            │
+│  ├─ Post-check: Diagnostic table                            │
+│  ├─ Interpretation in plain English                         │
+│  └─ "Why this matters" explanation                          │
 │                                                             │
-│  🔍 INDEXES (collapsible, with context)                    │
-│  ├─ Primary, unique, regular indexes                       │
-│  ├─ Icons for visual clarity                               │
-│  └─ "Why this matters" explanation                         │
+│  🔍 INDEXES (collapsible, with context)                     │
+│  ├─ Primary, unique, regular indexes                        │
+│  ├─ Icons for visual clarity                                │
+│  └─ "Why this matters" explanation                          │
 │                                                             │
-│  🔒 CONSTRAINTS (collapsible, with risk indicators)        │
-│  ├─ 🔑 Primary Keys                                        │
-│  ├─ 🔗 Foreign Keys (with CASCADE warnings)                │
-│  ├─ Unique Constraints                                     │
-│  ├─ 🧪 Check Constraints                                   │
-│  └─ "Why this matters" explanation                         │
+│  🔒 CONSTRAINTS (collapsible, with risk indicators)         │
+│  ├─ 🔑 Primary Keys                                         │
+│  ├─ 🔗 Foreign Keys (with CASCADE warnings)                 │
+│  ├─ Unique Constraints                                      │
+│  ├─ 🧪 Check Constraints                                    │
+│  └─ "Why this matters" explanation                          │
 │                                                             │
-│  📋 COPY DIAGNOSTICS (one-click sharing)                   │
-│  └─ Complete formatted report                              │
+│  📋 COPY DIAGNOSTICS (one-click sharing)                    │
+│  └─ Complete formatted report                               │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -155,24 +155,24 @@ Frontend:
 
 ### Time to Answer Questions
 
-| Question | Before | After | Improvement |
-|----------|--------|-------|-------------|
-| Can I read this table? | 2-3 min | 5 sec | **96% faster** |
-| Can I write to it? | 2-3 min | 5 sec | **96% faster** |
-| Why permission errors? | 5+ min | 30 sec | **90% faster** |
-| Is there Flyway drift? | 5+ min | Instant | **100% faster** |
-| Dangerous FKs? | 1-2 min | 5 sec | **95% faster** |
-| Share with team | 5+ min | 2 sec | **99% faster** |
+|        Question        | Before  |  After  |   Improvement  |
+|------------------------|---------|---------|----------------|
+| Can I read this table? | 2-3 min | 5 sec   | **96% faster** |
+| Can I write to it?     | 2-3 min | 5 sec   | **96% faster** |
+| Why permission errors? | 5+ min  | 30 sec  | **90% faster** |
+| Is there Flyway drift? | 5+ min  | Instant | **100% faster**|
+| Dangerous FKs?         | 1-2 min | 5 sec   | **95% faster** |
+| Share with team        | 5+ min  | 2 sec   | **99% faster** |
 
 ### User Experience
 
-| Aspect | Before | After |
-|--------|--------|-------|
-| Cognitive Load | High | Low |
-| Learning Curve | Steep | Gentle |
-| Error Prevention | Reactive | Proactive |
-| Collaboration | Difficult | Easy |
-| Trust | Low | High |
+|       Aspect     |   Before  |   After   |
+|------------------|-----------|-----------|
+| Cognitive Load   | High      | Low       |
+| Learning Curve   | Steep     | Gentle    |
+| Error Prevention | Reactive  | Proactive |
+| Collaboration    | Difficult | Easy      |
+| Trust            | Low       | High      |
 
 ---
 

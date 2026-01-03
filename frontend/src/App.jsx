@@ -7,6 +7,7 @@ import ActionButtons from './components/ActionButtons';
 import SummaryPanel from './components/SummaryPanel';
 import ResultsPanel from './components/ResultsPanel';
 import ConsolePanel from './components/ConsolePanel';
+import SqlSandboxPanel from './components/SqlSandboxPanel';
 import { apiService } from './services/apiService';
 import './App.css';
 
@@ -118,6 +119,33 @@ function App() {
     }
   };
 
+  const handleAnalyzeSql = async (sql, operationType) => {
+    if (!connectionId) {
+      addConsoleMessage('✗ Not connected. Please connect first.', 'error');
+      throw new Error('Not connected');
+    }
+
+    try {
+      addConsoleMessage('🧪 Analyzing SQL...', 'info');
+      const response = await apiService.analyzeSql(connectionId, sql, operationType);
+      
+      const findings = response.data.findings || [];
+      const errorCount = findings.filter(f => f.severity === 'ERROR').length;
+      const warnCount = findings.filter(f => f.severity === 'WARN').length;
+      
+      addConsoleMessage(
+        `✓ SQL analysis complete: ${errorCount} errors, ${warnCount} warnings`,
+        errorCount > 0 ? 'error' : warnCount > 0 ? 'warning' : 'success'
+      );
+      
+      return response.data;
+    } catch (error) {
+      const errorMsg = error.response?.data?.message || error.message;
+      addConsoleMessage(`✗ SQL analysis failed: ${errorMsg}`, 'error');
+      throw error;
+    }
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -162,6 +190,12 @@ function App() {
               <SummaryPanel
                 connectionStatus={connectionStatus}
                 summaryData={summaryData}
+              />
+
+              <SqlSandboxPanel
+                isConnected={connectionStatus === 'connected'}
+                connectionId={connectionId}
+                onAnalyze={handleAnalyzeSql}
               />
 
               <Box sx={{ mt: 2 }}>
