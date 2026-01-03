@@ -18,7 +18,11 @@ import {
   Divider,
   Stack,
   CircularProgress,
-  Tooltip
+  Tooltip,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -41,11 +45,13 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
     constraints: false,
     ownership: false
   });
+  const [expectedAccessProfile, setExpectedAccessProfile] = useState('read-write');
 
   // Refs for scrolling to sections
   const ownershipRef = useRef(null);
   const indexesRef = useRef(null);
   const constraintsRef = useRef(null);
+  const pkRef = useRef(null);
   const fkRef = useRef(null);
 
   if (!data) return null;
@@ -57,6 +63,9 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
   const foreignKeys = constraints.filter(c => c.type === 'FOREIGN KEY');
   const uniqueConstraints = constraints.filter(c => c.type === 'UNIQUE');
   const checkConstraints = constraints.filter(c => c.type === 'CHECK');
+  const otherConstraints = constraints.filter(c => 
+    !['PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE', 'CHECK'].includes(c.type)
+  );
   
   // Categorize indexes
   const primaryIndexes = indexes.filter(i => i.primary);
@@ -67,6 +76,35 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
   const cascadingFKs = foreignKeys.filter(fk => 
     fk.definition && (fk.definition.includes('ON DELETE CASCADE') || fk.definition.includes('ON UPDATE CASCADE'))
   );
+  
+  // Detect self-referencing FKs (recursive relationships)
+  const selfReferencingFKs = foreignKeys.filter(fk => 
+    fk.definition && fk.definition.toLowerCase().includes(`references ${schema}.${table}`)
+  );
+  
+  // Categorize FK risk levels
+  const getFKRiskLevel = (fk) => {
+    const def = fk.definition?.toLowerCase() || '';
+    const hasCascade = def.includes('on delete cascade') || def.includes('on update cascade');
+    
+    if (!hasCascade) return 'low';
+    
+    // Check if self-referencing (recursive)
+    if (def.includes(`references ${schema}.${table}`)) {
+      return 'critical';
+    }
+    
+    // Check if it's a root-level cascade (from parent entities like cart, order)
+    const rootEntities = ['cart', 'order', 'user', 'account', 'customer'];
+    const isRootCascade = rootEntities.some(entity => 
+      table.includes(entity) && fk.columns?.some(col => col.includes(entity))
+    );
+    
+    if (isRootCascade) return 'high';
+    
+    // Reference/lookup tables are usually moderate risk
+    return 'moderate';
+  };
 
   // Diagnostic calculations
   const ownershipOk = owner === currentUser;
@@ -74,11 +112,106 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
   const hasWriteAccess = privilegesData?.grantedPrivileges?.some(p => 
     ['INSERT', 'UPDATE', 'DELETE'].includes(p)
   ) || false;
+  const pkIntegrityOk = primaryKeys.length > 0;
   const fkIntegrityOk = foreignKeys.length === 0 || foreignKeys.every(fk => fk.definition);
   const hasCascadeRisk = cascadingFKs.length > 0;
   
   // Flyway drift detection
   const hasFlywayDrift = flywayInfo && owner && flywayInfo.installedBy !== currentUser && owner !== currentUser;
+
+  // Generate impact summary
+  const generateImpactSummary = () => {
+    const impacts = [];
+    
+    // Check for cascade delete risks
+    if (cascadingFKs.length > 0) {
+      const recursiveCascade = cascadingFKs.some(fk => 
+        fk.definition?.toLowerCase().includes(`references ${schema}.${table}`)
+      );
+      
+      if (recursiveCascade) {
+        impacts.push({
+          severity: 'warning',
+          message: 'Parent-child recursion exists (self FK with CASCADE). Deep deletes can cause long transactions.'
+        });
+      } else {
+        const parentTable = table.split('_')[0]; // e.g., 'cart' from 'cart_item'
+        impacts.push({
+          severity: 'warning',
+          message: `Deleting a ${parentTable} will cascade to ${table} records.`
+        });
+      }
+    }
+    
+    // Check for composite unique constraints (complex insert requirements)
+    const compositeUnique = uniqueConstraints.filter(u => u.columns && u.columns.length > 2);
+    if (compositeUnique.length > 0) {
+      const cols = compositeUnique[0].columns?.slice(0, 3).join(', ');
+      impacts.push({
+        severity: 'success',
+        message: `Uniqueness protects duplicate entries on (${cols}...).`
+      });
+    }
+    
+    // Check for no primary key
+    if (primaryKeys.length === 0) {
+      impacts.push({
+        severity: 'error',
+        message: 'No primary key defined. Updates and deletes may affect multiple rows unintentionally.'
+      });
+    }
+    
+    return impacts;
+  };
+
+  // Detect common failure patterns
+  const detectFailurePatterns = () => {
+    const patterns = [];
+    
+    // Recursive FK with CASCADE
+    if (selfReferencingFKs.length > 0 && cascadingFKs.length > 0) {
+      patterns.push({
+        type: 'Recursive FK with CASCADE',
+        description: 'Bulk delete may cause deep cascading deletes and long transactions.',
+        severity: 'error'
+      });
+    }
+    
+    // Composite unique constraint
+    const compositeUnique = uniqueConstraints.filter(u => u.columns && u.columns.length >= 3);
+    if (compositeUnique.length > 0) {
+      const constraint = compositeUnique[0];
+      patterns.push({
+        type: 'Composite unique constraint',
+        description: `Inserts must include all ${constraint.columns?.length} columns (${constraint.columns?.join(', ')}) or will fail with 23505.`,
+        severity: 'warning'
+      });
+    }
+    
+    // Check for NOT NULL constraints (from "other" constraints)
+    const notNullCount = otherConstraints.filter(c => 
+      c.type?.includes('NOT NULL') || c.definition?.includes('NOT NULL')
+    ).length;
+    
+    if (notNullCount > 0) {
+      patterns.push({
+        type: 'NOT NULL without default',
+        description: `${notNullCount} column(s) require explicit values. Inserts with partial payloads will fail with 23502.`,
+        severity: 'info'
+      });
+    }
+    
+    // Check constraints that limit values
+    if (checkConstraints.length > 0) {
+      patterns.push({
+        type: 'Check constraints on values',
+        description: `${checkConstraints.length} check constraint(s) enforce business rules. UPDATEs may fail with 23514.`,
+        severity: 'info'
+      });
+    }
+    
+    return patterns;
+  };
 
   const handleCheckPrivileges = async () => {
     setLoadingPrivileges(true);
@@ -94,8 +227,19 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
     }
   };
 
-  const scrollToSection = (ref) => {
-    ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const scrollToSection = (ref, sectionName) => {
+    // First expand the section if a section name is provided
+    if (sectionName) {
+      setExpandedSections(prev => ({
+        ...prev,
+        [sectionName]: true
+      }));
+    }
+    
+    // Scroll after a short delay to allow the section to expand
+    setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   };
 
   const toggleSection = (section) => {
@@ -272,38 +416,19 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
           📊 Diagnostics Summary
         </Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+          {/* Constraint-related diagnostics */}
           <DiagnosticPill
-            icon={ownershipOk ? <CheckCircleIcon fontSize="small" /> : <ErrorIcon fontSize="small" />}
-            label={ownershipOk ? 'Ownership OK' : 'Ownership Mismatch'}
-            status={ownershipOk ? 'success' : 'error'}
-            onClick={() => scrollToSection(ownershipRef)}
+            icon={pkIntegrityOk ? <CheckCircleIcon fontSize="small" /> : <WarningIcon fontSize="small" />}
+            label={pkIntegrityOk ? 'PK Integrity OK' : 'No Primary Key'}
+            status={pkIntegrityOk ? 'success' : 'warning'}
+            onClick={() => scrollToSection(pkRef, 'constraints')}
           />
           
-          {privilegesChecked && (
-            <>
-              <DiagnosticPill
-                icon={hasSelectAccess ? <CheckCircleIcon fontSize="small" /> : <ErrorIcon fontSize="small" />}
-                label={hasSelectAccess ? 'SELECT Access' : 'SELECT Missing'}
-                status={hasSelectAccess ? 'success' : 'error'}
-                onClick={() => scrollToSection(ownershipRef)}
-              />
-              
-              {!hasWriteAccess && (
-                <DiagnosticPill
-                  icon={<WarningIcon fontSize="small" />}
-                  label="Write Access Limited"
-                  status="warning"
-                  onClick={() => scrollToSection(ownershipRef)}
-                />
-              )}
-            </>
-          )}
-
           <DiagnosticPill
             icon={fkIntegrityOk ? <CheckCircleIcon fontSize="small" /> : <WarningIcon fontSize="small" />}
             label={fkIntegrityOk ? 'FK Integrity OK' : 'FK Issues'}
             status={fkIntegrityOk ? 'success' : 'warning'}
-            onClick={() => scrollToSection(fkRef)}
+            onClick={() => scrollToSection(constraintsRef, 'constraints')}
           />
 
           {hasCascadeRisk && (
@@ -311,10 +436,59 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
               icon={<WarningIcon fontSize="small" />}
               label={`${cascadingFKs.length} Cascade FK${cascadingFKs.length > 1 ? 's' : ''}`}
               status="warning"
-              onClick={() => scrollToSection(fkRef)}
+              onClick={() => scrollToSection(constraintsRef, 'constraints')}
             />
           )}
+          
+          <DiagnosticPill
+            icon={<InfoIcon fontSize="small" />}
+            label={`${constraints.length} Constraint${constraints.length !== 1 ? 's' : ''}`}
+            status="info"
+            onClick={() => scrollToSection(constraintsRef, 'constraints')}
+          />
+          
+          {/* Access/Privilege diagnostics */}
+          {privilegesChecked && (
+            <>
+              <DiagnosticPill
+                icon={hasSelectAccess ? <CheckCircleIcon fontSize="small" /> : <ErrorIcon fontSize="small" />}
+                label={hasSelectAccess ? 'SELECT Access' : 'SELECT Missing'}
+                status={hasSelectAccess ? 'success' : 'error'}
+                onClick={() => scrollToSection(ownershipRef, null)}
+              />
+              
+              {!hasWriteAccess && (
+                <DiagnosticPill
+                  icon={<WarningIcon fontSize="small" />}
+                  label="Write Access Limited"
+                  status="warning"
+                  onClick={() => scrollToSection(ownershipRef, null)}
+                />
+              )}
+            </>
+          )}
         </Box>
+        
+        {/* Impact Summary - "So What" */}
+        {generateImpactSummary().length > 0 && (
+          <Box sx={{ mt: 2, p: 1.5, bgcolor: '#f9fafb', borderRadius: 1, borderLeft: '4px solid #2196f3' }}>
+            <Typography variant="caption" sx={{ fontWeight: 'bold', color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Impact Summary
+            </Typography>
+            <Box sx={{ mt: 1 }}>
+              {generateImpactSummary().map((impact, idx) => (
+                <Box key={idx} sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, mb: 0.5 }}>
+                  {impact.severity === 'warning' && <Typography variant="body2">⚠️</Typography>}
+                  {impact.severity === 'success' && <Typography variant="body2">✅</Typography>}
+                  {impact.severity === 'error' && <Typography variant="body2">❌</Typography>}
+                  <Typography variant="body2" sx={{ fontSize: '0.875rem', color: 'text.primary' }}>
+                    {impact.message}
+                  </Typography>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        )}
       </Paper>
 
       {/* Flyway Drift Warning */}
@@ -390,10 +564,24 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
 
       {/* Ownership & Access Diagnostics */}
       <Paper elevation={1} sx={{ mb: 3 }} ref={ownershipRef}>
-        <Box sx={{ p: 2, bgcolor: '#f5f5f5' }}>
+        <Box sx={{ p: 2, bgcolor: '#f5f5f5', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
             🔐 Ownership & Access Diagnostics
           </Typography>
+          {privilegesChecked && (
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel>Expected Access</InputLabel>
+              <Select
+                value={expectedAccessProfile}
+                onChange={(e) => setExpectedAccessProfile(e.target.value)}
+                label="Expected Access"
+              >
+                <MenuItem value="read-only">Read-only service</MenuItem>
+                <MenuItem value="read-write">Read-write service</MenuItem>
+                <MenuItem value="admin">Admin / migration</MenuItem>
+              </Select>
+            </FormControl>
+          )}
         </Box>
         <Box sx={{ p: 2 }}>
           {!privilegesChecked ? (
@@ -444,19 +632,47 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
                     
                     {['SELECT', 'INSERT', 'UPDATE', 'DELETE'].map(priv => {
                       const hasPriv = privilegesData?.grantedPrivileges?.includes(priv);
+                      
+                      // Determine if this is expected based on access profile
+                      let isExpected = true;
+                      let isMismatch = false;
+                      
+                      if (expectedAccessProfile === 'read-only') {
+                        isExpected = priv === 'SELECT';
+                        isMismatch = !hasPriv && priv === 'SELECT'; // Missing SELECT is bad
+                      } else if (expectedAccessProfile === 'read-write') {
+                        isExpected = true; // All are expected
+                        isMismatch = !hasPriv; // Any missing is a mismatch
+                      } else if (expectedAccessProfile === 'admin') {
+                        isExpected = true;
+                        isMismatch = !hasPriv || !ownershipOk; // Admin should have everything + ownership
+                      }
+                      
                       return (
-                        <TableRow key={priv}>
+                        <TableRow key={priv} sx={{ bgcolor: isMismatch ? '#ffebee' : 'inherit' }}>
                           <TableCell><strong>{priv}</strong></TableCell>
                           <TableCell>
                             {hasPriv ? (
                               <Chip icon={<CheckCircleIcon />} label="Allowed" color="success" size="small" />
                             ) : (
-                              <Chip icon={<ErrorIcon />} label="Missing" color="error" size="small" />
+                              <Chip 
+                                icon={<ErrorIcon />} 
+                                label="Missing" 
+                                color={isMismatch ? "error" : "default"}
+                                size="small" 
+                              />
                             )}
                           </TableCell>
                           <TableCell>
                             <Typography variant="caption">
-                              {hasPriv ? 'Permission granted' : 'No permission'}
+                              {hasPriv ? (
+                                'Permission granted'
+                              ) : (
+                                <>
+                                  {isMismatch ? '❌ ' : ''}No permission
+                                  {!isExpected && !isMismatch && ' (expected for this profile)'}
+                                </>
+                              )}
                             </Typography>
                           </TableCell>
                         </TableRow>
@@ -496,6 +712,59 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
           </WhyThisMatters>
         </Box>
       </Paper>
+
+      {/* Common Failure Patterns */}
+      {detectFailurePatterns().length > 0 && (
+        <Paper elevation={1} sx={{ mb: 3, border: '2px solid #ff9800' }}>
+          <Box sx={{ p: 2, bgcolor: '#fff3e0' }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#e65100' }}>
+              🚨 Common Failure Patterns (Detected)
+            </Typography>
+          </Box>
+          <Box sx={{ p: 2 }}>
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                    <TableCell width="30%"><strong>Pattern</strong></TableCell>
+                    <TableCell><strong>Description & Impact</strong></TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {detectFailurePatterns().map((pattern, idx) => (
+                    <TableRow key={idx} hover sx={{ 
+                      bgcolor: pattern.severity === 'error' ? '#ffebee' : 
+                               pattern.severity === 'warning' ? '#fff3e0' : 'inherit' 
+                    }}>
+                      <TableCell>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          {pattern.severity === 'error' && <ErrorIcon color="error" fontSize="small" />}
+                          {pattern.severity === 'warning' && <WarningIcon color="warning" fontSize="small" />}
+                          {pattern.severity === 'info' && <InfoIcon color="info" fontSize="small" />}
+                          <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                            {pattern.type}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {pattern.description}
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+            
+            <WhyThisMatters>
+              These patterns are detected from your table structure and represent common failure modes 
+              encountered in production: constraint violations (23xxx errors), cascade depth issues, 
+              and partial payload failures.
+            </WhyThisMatters>
+          </Box>
+        </Paper>
+      )}
 
       {/* Indexes Section */}
       <Paper elevation={1} sx={{ mb: 3 }} ref={indexesRef}>
@@ -621,9 +890,35 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
         <Collapse in={expandedSections.constraints}>
           <Divider />
           <Box sx={{ p: 2 }}>
+            {/* Constraint Summary */}
+            {constraints.length > 0 && (
+              <Box sx={{ mb: 3, p: 2, bgcolor: '#f5f5f5', borderRadius: 1 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                  Constraint Breakdown
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {primaryKeys.length > 0 && (
+                    <Chip label={`${primaryKeys.length} Primary Key${primaryKeys.length !== 1 ? 's' : ''}`} color="error" size="small" />
+                  )}
+                  {foreignKeys.length > 0 && (
+                    <Chip label={`${foreignKeys.length} Foreign Key${foreignKeys.length !== 1 ? 's' : ''}`} color="info" size="small" />
+                  )}
+                  {uniqueConstraints.length > 0 && (
+                    <Chip label={`${uniqueConstraints.length} Unique`} color="success" size="small" />
+                  )}
+                  {checkConstraints.length > 0 && (
+                    <Chip label={`${checkConstraints.length} Check`} color="warning" size="small" />
+                  )}
+                  {otherConstraints.length > 0 && (
+                    <Chip label={`${otherConstraints.length} Other`} color="default" size="small" />
+                  )}
+                </Box>
+              </Box>
+            )}
+            
             {/* Primary Keys */}
             {primaryKeys.length > 0 && (
-              <Box sx={{ mb: 3 }}>
+              <Box sx={{ mb: 3 }} ref={pkRef}>
                 <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   🔑 Primary Keys
                 </Typography>
@@ -636,9 +931,9 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {primaryKeys.map(c => (
-                        <TableRow key={c.name} hover>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name}</TableCell>
+                      {primaryKeys.map((c, idx) => (
+                        <TableRow key={c.name || `pk-${idx}`} hover>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name || '(unnamed)'}</TableCell>
                           <TableCell>{c.columns?.join(', ') || '-'}</TableCell>
                         </TableRow>
                       ))}
@@ -668,20 +963,42 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {foreignKeys.map(c => {
-                        const hasCascade = c.definition && (
-                          c.definition.includes('ON DELETE CASCADE') || 
-                          c.definition.includes('ON UPDATE CASCADE')
-                        );
+                      {foreignKeys.map((c, idx) => {
+                        const riskLevel = getFKRiskLevel(c);
+                        const def = c.definition?.toLowerCase() || '';
+                        const hasCascade = def.includes('on delete cascade') || def.includes('on update cascade');
+                        const isRecursive = def.includes(`references ${schema}.${table}`);
+                        
+                        let riskLabel = 'Normal';
+                        let riskColor = 'default';
+                        let riskTooltip = 'No cascade behavior';
+                        
+                        if (riskLevel === 'critical') {
+                          riskLabel = '🔴 Critical (recursive)';
+                          riskColor = 'error';
+                          riskTooltip = 'Self-referencing FK with CASCADE - deep deletes can cause long transactions';
+                        } else if (riskLevel === 'high') {
+                          riskLabel = '🟠 High (root delete)';
+                          riskColor = 'warning';
+                          riskTooltip = 'FK from parent entity - deleting parent will cascade to many records';
+                        } else if (riskLevel === 'moderate') {
+                          riskLabel = '🟡 Moderate';
+                          riskColor = 'warning';
+                          riskTooltip = 'Cascade from reference/lookup table';
+                        }
+                        
                         return (
-                          <TableRow key={c.name} hover sx={{ bgcolor: hasCascade ? '#fff3e0' : 'inherit' }}>
-                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name}</TableCell>
+                          <TableRow key={c.name || `fk-${idx}`} hover sx={{ 
+                            bgcolor: riskLevel === 'critical' ? '#ffebee' : 
+                                     riskLevel === 'high' ? '#fff3e0' : 'inherit' 
+                          }}>
+                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name || '(unnamed)'}</TableCell>
                             <TableCell>{c.columns?.join(', ') || '-'}</TableCell>
                             <TableCell sx={{ fontSize: '0.75rem' }}>{c.definition}</TableCell>
                             <TableCell>
                               {hasCascade ? (
-                                <Tooltip title="Deletes/updates will cascade to related records">
-                                  <Chip label="🟡 High impact" color="warning" size="small" />
+                                <Tooltip title={riskTooltip}>
+                                  <Chip label={riskLabel} color={riskColor} size="small" />
                                 </Tooltip>
                               ) : (
                                 <Chip label="Normal" size="small" variant="outlined" />
@@ -714,15 +1031,34 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
                       <TableRow sx={{ backgroundColor: '#e8f5e9' }}>
                         <TableCell><strong>Name</strong></TableCell>
                         <TableCell><strong>Columns</strong></TableCell>
+                        <TableCell><strong>CRUD Implications</strong></TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {uniqueConstraints.map(c => (
-                        <TableRow key={c.name} hover>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name}</TableCell>
-                          <TableCell>{c.columns?.join(', ') || '-'}</TableCell>
-                        </TableRow>
-                      ))}
+                      {uniqueConstraints.map((c, idx) => {
+                        const colCount = c.columns?.length || 0;
+                        let crudImplication = '';
+                        
+                        if (colCount >= 3) {
+                          crudImplication = `INSERT requires all ${colCount} fields stable and deterministic. Partial updates may violate uniqueness (23505).`;
+                        } else if (colCount === 2) {
+                          crudImplication = 'Composite uniqueness. Both columns must be provided on INSERT.';
+                        } else {
+                          crudImplication = 'Single-column uniqueness enforced.';
+                        }
+                        
+                        return (
+                          <TableRow key={c.name || `unique-${idx}`} hover>
+                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name || '(unnamed)'}</TableCell>
+                            <TableCell>{c.columns?.join(', ') || '-'}</TableCell>
+                            <TableCell>
+                              <Typography variant="caption" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                                {crudImplication}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </TableContainer>
@@ -742,14 +1078,74 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
                         <TableCell><strong>Name</strong></TableCell>
                         <TableCell><strong>Columns</strong></TableCell>
                         <TableCell><strong>Definition</strong></TableCell>
+                        <TableCell><strong>CRUD Implications</strong></TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {checkConstraints.map(c => (
-                        <TableRow key={c.name} hover>
-                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name}</TableCell>
+                      {checkConstraints.map((c, idx) => {
+                        const def = c.definition?.toLowerCase() || '';
+                        let crudImplication = '';
+                        
+                        if (def.includes('>') || def.includes('<') || def.includes('=')) {
+                          crudImplication = 'INSERT/UPDATE will fail with 23514 if condition not met.';
+                        } else if (def.includes('in (')) {
+                          crudImplication = 'Value must be in allowed set. Invalid values fail with 23514.';
+                        } else {
+                          crudImplication = 'Business rule enforced at database level.';
+                        }
+                        
+                        return (
+                          <TableRow key={c.name || `check-${idx}`} hover>
+                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name || '(unnamed)'}</TableCell>
+                            <TableCell>{c.columns?.join(', ') || '-'}</TableCell>
+                            <TableCell sx={{ fontSize: '0.75rem' }}>{c.definition}</TableCell>
+                            <TableCell>
+                              <Typography variant="caption" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                                {crudImplication}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                
+                <Alert severity="info" sx={{ mt: 2, fontSize: '0.85rem' }}>
+                  <Typography variant="caption">
+                    💡 <strong>Example:</strong> If you see <code>CHECK (quantity &gt; 0)</code>, then 
+                    <code>UPDATE quantity = 0</code> will fail. Frontend validations should mirror these rules.
+                  </Typography>
+                </Alert>
+              </Box>
+            )}
+
+            {/* Other Constraints (NOT NULL, DEFAULT, etc.) */}
+            {otherConstraints.length > 0 && (
+              <Box sx={{ mb: 3 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  📋 Other Constraints
+                  <Chip label={`${otherConstraints.length}`} size="small" sx={{ ml: 0.5 }} />
+                </Typography>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                        <TableCell><strong>Name</strong></TableCell>
+                        <TableCell><strong>Type</strong></TableCell>
+                        <TableCell><strong>Columns</strong></TableCell>
+                        <TableCell><strong>Definition</strong></TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {otherConstraints.map((c, idx) => (
+                        <TableRow key={c.name || `other-${idx}`} hover>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>{c.name || '(unnamed)'}</TableCell>
+                          <TableCell>
+                            <Chip label={c.type || 'OTHER'} size="small" variant="outlined" />
+                          </TableCell>
                           <TableCell>{c.columns?.join(', ') || '-'}</TableCell>
-                          <TableCell sx={{ fontSize: '0.75rem' }}>{c.definition}</TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem' }}>{c.definition || '-'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>

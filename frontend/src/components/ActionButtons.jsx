@@ -10,11 +10,15 @@ import {
 export default function ActionButtons({
   isConnected,
   schema,
-  onAction
+  onAction,
+  currentAction
 }) {
   const [tableName, setTableName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeAction, setActiveAction] = useState(null);
+
+  const handleTableNameChange = (e) => {
+    setTableName(e.target.value);
+  };
 
   const handleAction = (actionName, requiresTable = false) => {
     if (requiresTable && !tableName) {
@@ -22,14 +26,12 @@ export default function ActionButtons({
       return;
     }
     
-    // Set the active action for visual feedback (stays highlighted until another action is clicked)
-    setActiveAction(actionName);
-    
     onAction(actionName, { tableName, searchQuery });
   };
 
   const getButtonStyle = (actionName) => {
-    if (activeAction === actionName) {
+    // Highlight button only if it's the current action being displayed
+    if (currentAction === actionName) {
       return {
         boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.3)',
         borderWidth: '2px',
@@ -53,7 +55,7 @@ export default function ActionButtons({
         </Typography>
 
         <Button
-          variant={activeAction === 'verify-connection' ? 'contained' : 'outlined'}
+          variant={currentAction === 'verify-connection' ? 'contained' : 'outlined'}
           onClick={() => handleAction('verify-connection')}
           disabled={!isConnected}
           fullWidth
@@ -64,7 +66,7 @@ export default function ActionButtons({
         </Button>
 
         <Button
-          variant={activeAction === 'flyway-health' ? 'contained' : 'outlined'}
+          variant={currentAction === 'flyway-health' ? 'contained' : 'outlined'}
           onClick={() => handleAction('flyway-health')}
           disabled={!isConnected}
           fullWidth
@@ -75,7 +77,7 @@ export default function ActionButtons({
         </Button>
 
         <Button
-          variant={activeAction === 'list-tables' ? 'contained' : 'outlined'}
+          variant={currentAction === 'list-tables' ? 'contained' : 'outlined'}
           onClick={() => handleAction('list-tables')}
           disabled={!isConnected}
           fullWidth
@@ -98,7 +100,7 @@ export default function ActionButtons({
         <TextField
           label="Enter exact table name"
           value={tableName}
-          onChange={(e) => setTableName(e.target.value)}
+          onChange={handleTableNameChange}
           size="small"
           placeholder="e.g. cart_item"
           fullWidth
@@ -106,7 +108,7 @@ export default function ActionButtons({
         />
 
         <Button
-          variant="contained"
+          variant={currentAction === 'table-details' ? 'contained' : 'outlined'}
           onClick={() => handleAction('table-details', true)}
           disabled={!isConnected || !tableName}
           fullWidth
@@ -117,7 +119,7 @@ export default function ActionButtons({
         </Button>
 
         <Button
-          variant={activeAction === 'check-ownership' ? 'contained' : 'outlined'}
+          variant={currentAction === 'check-ownership' ? 'contained' : 'outlined'}
           onClick={() => handleAction('check-ownership', true)}
           disabled={!isConnected || !tableName}
           fullWidth
@@ -149,12 +151,12 @@ export default function ActionButtons({
 
         <Button
           variant="contained"
-          color={activeAction === 'find-table' ? 'primary' : 'success'}
+          color={currentAction === 'find-table' ? 'primary' : 'success'}
           onClick={() => handleAction('find-table')}
           disabled={!isConnected || !searchQuery}
           fullWidth
           size="small"
-          sx={activeAction === 'find-table' ? getButtonStyle('find-table') : {}}
+          sx={currentAction === 'find-table' ? getButtonStyle('find-table') : {}}
         >
           Search Tables
         </Button>

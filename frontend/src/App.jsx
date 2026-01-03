@@ -26,6 +26,7 @@ function App() {
   const [results, setResults] = useState(null);
   const [consoleMessages, setConsoleMessages] = useState([]);
   const [schema, setSchema] = useState('public');
+  const [currentAction, setCurrentAction] = useState(null);
 
   const addConsoleMessage = (text, type = 'info') => {
     setConsoleMessages(prev => [...prev, { text, type }]);
@@ -39,6 +40,7 @@ function App() {
       setSchema(formData.schema || 'public');
       addConsoleMessage('✓ Connected successfully', 'success');
       setResults(response.data);
+      setCurrentAction('connect');
     } catch (error) {
       setConnectionStatus('disconnected');
       addConsoleMessage(`✗ Connection failed: ${error.response?.data?.message || error.message}`, 'error');
@@ -52,6 +54,7 @@ function App() {
       const response = await apiService.getSummary(connectionId);
       setSummaryData(response.data);
       setResults(response.data);
+      setCurrentAction('load-summary');
       addConsoleMessage('✓ Summary loaded', 'success');
     } catch (error) {
       addConsoleMessage(`✗ Failed to load summary: ${error.message}`, 'error');
@@ -108,6 +111,7 @@ function App() {
       }
 
       setResults(response.data);
+      setCurrentAction(actionName);
     } catch (error) {
       const errorMsg = error.response?.data?.message || error.message;
       addConsoleMessage(`✗ ${actionName} failed: ${errorMsg}`, 'error');
@@ -148,6 +152,7 @@ function App() {
                   isConnected={connectionStatus === 'connected'}
                   schema={schema}
                   onAction={handleAction}
+                  currentAction={currentAction}
                 />
               </Paper>
             </Grid>
