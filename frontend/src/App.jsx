@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Container, Grid, Paper, Typography, Box } from '@mui/material';
+import { Container, Grid, Paper, Typography, Box, Tabs, Tab } from '@mui/material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import ConnectionForm from './components/ConnectionForm';
@@ -8,6 +8,7 @@ import SummaryPanel from './components/SummaryPanel';
 import ResultsPanel from './components/ResultsPanel';
 import ConsolePanel from './components/ConsolePanel';
 import SqlSandboxPanel from './components/SqlSandboxPanel';
+import EnvironmentComparisonPanel from './components/EnvironmentComparisonPanel';
 import { apiService } from './services/apiService';
 import './App.css';
 
@@ -28,6 +29,8 @@ function App() {
   const [consoleMessages, setConsoleMessages] = useState([]);
   const [schema, setSchema] = useState('public');
   const [currentAction, setCurrentAction] = useState(null);
+  const [activeTab, setActiveTab] = useState(0);
+  const [sourceConnectionDetails, setSourceConnectionDetails] = useState(null);
 
   const addConsoleMessage = (text, type = 'info') => {
     setConsoleMessages(prev => [...prev, { text, type }]);
@@ -36,17 +39,36 @@ function App() {
   const handleConnect = async (formData) => {
     try {
       const response = await apiService.connect(formData);
-      setConnectionId(response.data.connectionId);
+      const connId = response.data.connectionId;
+      setConnectionId(connId);
       setConnectionStatus('connected');
       setSchema(formData.schema || 'public');
       addConsoleMessage('✓ Connected successfully', 'success');
       setResults(response.data);
       setCurrentAction('connect');
+      
+      // Fetch source connection details for comparison tab
+      try {
+        const identityResponse = await apiService.getIdentity(connId);
+        setSourceConnectionDetails({
+          host: formData.host,
+          database: formData.database,
+          username: formData.username,
+          schema: formData.schema || 'public',
+          ...identityResponse.data
+        });
+      } catch (err) {
+        console.error('Failed to fetch connection details:', err);
+      }
     } catch (error) {
       setConnectionStatus('disconnected');
       addConsoleMessage(`✗ Connection failed: ${error.response?.data?.message || error.message}`, 'error');
       throw error;
     }
+  };
+
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
   };
 
   const handleLoadSummary = async () => {
@@ -146,6 +168,47 @@ function App() {
     }
   };
 
+  const handleCompareEnvironments = async (
+    sourceConnectionId,
+    targetConnectionId,
+    sourceEnvName,
+    targetEnvName,
+    schema,
+    specificTables
+  ) => {
+    try {
+      addConsoleMessage(
+        `🔍 Comparing environments: ${sourceEnvName} → ${targetEnvName}...`,
+        'info'
+      );
+      
+      const response = await apiService.compareEnvironments(
+        sourceConnectionId,
+        targetConnectionId,
+        sourceEnvName,
+        targetEnvName,
+        schema,
+        specificTables
+      );
+      
+      const totalDrift = response.data.driftSections.reduce(
+        (sum, section) => sum + section.differCount,
+        0
+      );
+      
+      addConsoleMessage(
+        `✓ Environment comparison complete: ${totalDrift} differences found`,
+        totalDrift > 0 ? 'warning' : 'success'
+      );
+      
+      return response;
+    } catch (error) {
+      const errorMsg = error.response?.data?.message || error.message;
+      addConsoleMessage(`✗ Environment comparison failed: ${errorMsg}`, 'error');
+      throw error;
+    }
+  };
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -185,26 +248,54 @@ function App() {
               </Paper>
             </Grid>
 
-            {/* Right Panel */}
+            {/* Right Panel - Tabbed Workspace */}
             <Grid item sx={{ width: '66.67%', minWidth: '66.67%', maxWidth: '66.67%' }}>
-              <SummaryPanel
-                connectionStatus={connectionStatus}
-                summaryData={summaryData}
-              />
+              <Paper elevation={2}>
+                <Tabs 
+                  value={activeTab} 
+                  onChange={handleTabChange}
+                  sx={{ borderBottom: 1, borderColor: 'divider' }}
+                >
+                  <Tab label="Single Environment" />
+                  <Tab label="Compare Environments" />
+                </Tabs>
 
-              <SqlSandboxPanel
-                isConnected={connectionStatus === 'connected'}
-                connectionId={connectionId}
-                onAnalyze={handleAnalyzeSql}
-              />
+                <Box sx={{ p: 3 }}>
+                  {/* Tab 1: Single Environment (Original Functionality) */}
+                  {activeTab === 0 && (
+                    <Box>
+                      <SummaryPanel
+                        connectionStatus={connectionStatus}
+                        summaryData={summaryData}
+                      />
 
-              <Box sx={{ mt: 2 }}>
-                <ResultsPanel
-                  results={results}
-                  onClear={() => setResults(null)}
-                  connectionId={connectionId}
-                />
-              </Box>
+                      <SqlSandboxPanel
+                        isConnected={connectionStatus === 'connected'}
+                        connectionId={connectionId}
+                        onAnalyze={handleAnalyzeSql}
+                      />
+
+                      <Box sx={{ mt: 2 }}>
+                        <ResultsPanel
+                          results={results}
+                          onClear={() => setResults(null)}
+                          connectionId={connectionId}
+                        />
+                      </Box>
+                    </Box>
+                  )}
+
+                  {/* Tab 2: Compare Environments */}
+                  {activeTab === 1 && (
+                    <EnvironmentComparisonPanel
+                      isConnected={connectionStatus === 'connected'}
+                      currentConnectionId={connectionId}
+                      sourceConnectionDetails={sourceConnectionDetails}
+                      onCompare={handleCompareEnvironments}
+                    />
+                  )}
+                </Box>
+              </Paper>
             </Grid>
           </Grid>
 

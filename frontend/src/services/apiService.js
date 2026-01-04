@@ -55,6 +55,21 @@ export const apiService = {
       connectionId,
       sql,
       operationType
-    })
+    }),
+  
+  // Environment Comparison
+  compareEnvironments: (sourceConnectionId, targetConnectionId, sourceEnvName, targetEnvName, schema, specificTables) =>
+    axios.post(`${API_BASE}/environments/compare`, {
+      sourceConnectionId,
+      targetConnectionId,
+      sourceEnvironmentName: sourceEnvName,
+      targetEnvironmentName: targetEnvName,
+      schema,
+      specificTables
+    }),
+  
+  // List active connections
+  listConnections: () =>
+    axios.get(`${API_BASE}/connections/list`)
 };
 

@@ -15,7 +15,12 @@ import com.example.Triage.service.db.DbIdentityService;
 import com.example.Triage.service.db.DbSummaryService;
 import com.example.Triage.util.DbConnectionUtils;
 import com.example.Triage.model.dto.FlywayHistoryRowDto;
+import com.example.Triage.model.dto.ConnectionSummaryDto;
+import com.example.Triage.model.dto.DbConnectContextDto;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -101,5 +106,31 @@ public class DbConnectionHandler {
             log.error("#getFlywayHistory: Flyway history retrieval failed for connectionId: {}", connectionId, e);
             throw new ConnectionNotFoundException("FLYWAY_HISTORY_FAILED.");
         }
+    }
+
+    public List<ConnectionSummaryDto> listActiveConnections() {
+        log.info("#listActiveConnections: Listing all active connections");
+        Map<String, DbConnectContextDto> dedupedBySignature = new LinkedHashMap<>();
+
+        for (var ctx : registry.listActiveConnections()) {
+            String signature = String.format("%s:%d/%s|%s",
+                    ctx.host(), ctx.port(), ctx.database(), ctx.username());
+
+            DbConnectContextDto existing = dedupedBySignature.get(signature);
+            if (existing == null || ctx.createdAt().isAfter(existing.createdAt())) {
+                dedupedBySignature.put(signature, ctx);
+            }
+        }
+
+        return dedupedBySignature.values().stream()
+                .map(ctx -> new ConnectionSummaryDto(
+                        ctx.id(),
+                        ctx.host(),
+                        ctx.port(),
+                        ctx.database(),
+                        ctx.username(),
+                        ctx.schema(),
+                        ctx.createdAt().toString()))
+                .collect(Collectors.toList());
     }
 }

@@ -53,4 +53,9 @@ public class DbConnectionRegistry {
         Instant now = Instant.now();
         store.entrySet().removeIf(e -> now.isAfter(e.getValue().createdAt().plus(TTL)));
     }
+
+    public java.util.List<DbConnectContextDto> listActiveConnections() {
+        purgeExpired();
+        return new java.util.ArrayList<>(store.values());
+    }
 }

@@ -127,4 +127,16 @@ public class DbConnectionController {
                     .body(new ErrorResponse("PRIVILEGES_CHECK_FAILED", LogUtils.safeMessage(e)));
         }
     }
+
+    @GetMapping("/connections/list")
+    public ResponseEntity<?> listConnections() {
+        log.info("#listConnections: Listing all active connections");
+        try {
+            var connections = connectionHandler.listActiveConnections();
+            return ResponseEntity.ok(connections);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("LIST_CONNECTIONS_FAILED", LogUtils.safeMessage(e)));
+        }
+    }
 }
