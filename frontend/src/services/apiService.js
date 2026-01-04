@@ -70,6 +70,10 @@ export const apiService = {
   
   // List active connections
   listConnections: () =>
-    axios.get(`${API_BASE}/connections/list`)
+    axios.get(`${API_BASE}/connections/list`),
+  
+  // Export diagnostics
+  exportDiagnostics: (connectionId) =>
+    axios.get(`${API_BASE}/diagnostics/export`, { params: { connectionId } })
 };
 

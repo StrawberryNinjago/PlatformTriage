@@ -50,6 +50,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import InfoIcon from '@mui/icons-material/Info';
 import SearchIcon from '@mui/icons-material/Search';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import DownloadIcon from '@mui/icons-material/Download';
 import { apiService } from '../services/apiService';
 
 export default function EnvironmentComparisonPanel({ 
@@ -69,8 +70,17 @@ export default function EnvironmentComparisonPanel({
   const [showOnlyDifferences, setShowOnlyDifferences] = useState(true);
   const [severityFilter, setSeverityFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const createEmptySuggestions = () => ({
+    tables: [],
+    columns: [],
+    indexes: [],
+    constraints: []
+  });
+  const [searchSuggestions, setSearchSuggestions] = useState(createEmptySuggestions);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  const [exportSuccess, setExportSuccess] = useState(false);
   
   // Disclosure state (3-level pattern)
   const [expandedConclusion, setExpandedConclusion] = useState(null);
@@ -153,6 +163,27 @@ export default function EnvironmentComparisonPanel({
     };
     
     copyToClipboard(JSON.stringify(diagnostics, null, 2), 'Diagnostics');
+  };
+
+  const handleExportForJira = async () => {
+    if (!currentConnectionId) return;
+    try {
+      const response = await apiService.exportDiagnostics(currentConnectionId);
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `db-doctor-diagnostics-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to export diagnostics:', err);
+    }
   };
 
   const getComparisonModeColor = (mode) => {
@@ -278,8 +309,62 @@ export default function EnvironmentComparisonPanel({
     );
   };
 
+  const parseSearchQuery = (query) => {
+    if (!query) return { type: null, term: '' };
+    
+    // Check for power user syntax: table:cart_item, column:promo_code, etc.
+    const match = query.match(/^(table|column|index|constraint|migration):(.+)$/i);
+    if (match) {
+      return { type: match[1].toLowerCase(), term: match[2].toLowerCase() };
+    }
+    
+    // Plain text search
+    return { type: null, term: query.toLowerCase() };
+  };
+
+  const matchesSearch = (item, searchType, searchTerm) => {
+    if (!searchTerm) return true;
+    
+    const objectName = (item.objectName || '').toLowerCase();
+    const message = (item.message || '').toLowerCase();
+    
+    // Support wildcards (* → .*)
+    const regexTerm = searchTerm.replace(/\*/g, '.*');
+    const regex = new RegExp(regexTerm, 'i'); // case-insensitive
+    
+    // Type-specific matching
+    if (searchType) {
+      switch (searchType) {
+        case 'table':
+          // Match table name (before first dot or entire name)
+          const tableName = objectName.includes('.') ? objectName.split('.')[0] : objectName;
+          return regex.test(tableName);
+        case 'column':
+          // Match column name (after last dot)
+          return objectName.includes('.') && regex.test(objectName.split('.').pop());
+        case 'index':
+          return item.category === 'Performance' && regex.test(objectName);
+        case 'constraint':
+          return item.category === 'Compatibility' && 
+                 item.attribute === 'type' && 
+                 regex.test(objectName);
+        case 'migration':
+          // Search in message for migration script names
+          return regex.test(message);
+        default:
+          return regex.test(objectName) || regex.test(message);
+      }
+    }
+    
+    // Plain text: match anything containing the term
+    // This catches cart_item in "cart_item", "cart_item.promo_code", "cart_item_cart_id_fkey", etc.
+    const matches = regex.test(objectName) || regex.test(message);
+    return matches;
+  };
+
   const filterDriftItems = (items) => {
     let filtered = items;
+    const initialCount = items.length;
 
     // Filter by "only differences"
     if (showOnlyDifferences) {
@@ -291,17 +376,117 @@ export default function EnvironmentComparisonPanel({
       filtered = filtered.filter(item => norm(item.severity) === severityFilter.toUpperCase());
     }
 
-    // Filter by search query
+    // Filter by search query with type support
     if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(item => 
-        (item.objectName || '').toLowerCase().includes(query) ||
-        (item.message || '').toLowerCase().includes(query)
-      );
+      const { type, term } = parseSearchQuery(searchQuery);
+      console.log('[Filter] Searching for:', { query: searchQuery, type, term });
+      filtered = filtered.filter(item => {
+        const matches = matchesSearch(item, type, term);
+        if (matches) {
+          console.log('[Filter] Match:', item.objectName, item.category);
+        }
+        return matches;
+      });
+    }
+
+    if (searchQuery && filtered.length !== initialCount) {
+      console.log(`[Filter] Filtered ${initialCount} → ${filtered.length} items for query "${searchQuery}"`);
     }
 
     return filtered;
   };
+
+  const generateSearchSuggestions = (query) => {
+    if (!query || query.length < 2 || !comparisonResult) {
+      setSearchSuggestions(createEmptySuggestions());
+      setShowSuggestions(false);
+      return;
+    }
+    
+    const lowerQuery = query.toLowerCase();
+    const suggestions = {
+      tables: new Set(),
+      columns: new Set(),
+      indexes: new Set(),
+      constraints: new Set()
+    };
+    
+    console.log('[Suggestions] Generating for query:', query);
+    
+    comparisonResult.driftSections.forEach(section => {
+      console.log(`[Suggestions] Section: ${section.sectionName}, Items: ${section.driftItems.length}`);
+      
+      section.driftItems.forEach(item => {
+        const objName = item.objectName || '';
+        const lowerObjName = objName.toLowerCase();
+        
+        // Match if query appears anywhere in the object name
+        if (!lowerObjName.includes(lowerQuery)) {
+          return; // Skip this item
+        }
+        
+        if (objName.includes('.')) {
+          // Has dot: format is "table.column", "table.index", etc.
+          const parts = objName.split('.');
+          const tableName = parts[0];
+          const childName = parts[parts.length - 1];
+          
+          // Always add the table if it matches
+          if (tableName.toLowerCase().includes(lowerQuery)) {
+            suggestions.tables.add(tableName);
+          }
+          
+          // Add to appropriate category based on section
+          if (section.sectionName === 'Columns') {
+            suggestions.columns.add(objName);
+          } else if (section.sectionName === 'Indexes') {
+            suggestions.indexes.add(objName);
+          } else if (section.sectionName === 'Constraints') {
+            suggestions.constraints.add(objName);
+          }
+        } else {
+          // No dot: likely a table name or a simple constraint/index name
+          if (section.sectionName === 'Tables') {
+            suggestions.tables.add(objName);
+          } else if (section.sectionName === 'Indexes') {
+            suggestions.indexes.add(objName);
+          } else if (section.sectionName === 'Constraints') {
+            suggestions.constraints.add(objName);
+          } else {
+            // Fallback: treat as table name
+            suggestions.tables.add(objName);
+          }
+        }
+      });
+    });
+    
+    const result = {
+      tables: Array.from(suggestions.tables).slice(0, 5),
+      columns: Array.from(suggestions.columns).slice(0, 5),
+      indexes: Array.from(suggestions.indexes).slice(0, 5),
+      constraints: Array.from(suggestions.constraints).slice(0, 5)
+    };
+    
+    console.log('[Suggestions] Result:', result);
+    setSearchSuggestions(result);
+    setShowSuggestions(true);
+  };
+
+  const handleSearchChange = (value) => {
+    setSearchQuery(value);
+    if (value.length >= 2) {
+      generateSearchSuggestions(value);
+    } else {
+      setSearchSuggestions(createEmptySuggestions());
+      setShowSuggestions(false);
+    }
+  };
+
+  const hasAnySuggestions =
+    searchSuggestions.tables.length > 0 ||
+    searchSuggestions.columns.length > 0 ||
+    searchSuggestions.indexes.length > 0 ||
+    searchSuggestions.constraints.length > 0;
 
   const renderDriftSection = (section) => {
     if (!section.availability.available) {
@@ -332,9 +517,32 @@ export default function EnvironmentComparisonPanel({
     const matchItems = section.driftItems.filter(i => norm(i.status) === 'MATCH');
     const differItems = section.driftItems.filter(i => norm(i.status) === 'DIFFER');
     const showMatchNotice = !showOnlyDifferences && matchItems.length === 0 && section.matchCount > 0;
+    
+    // Count filtered items
+    const filteredDifferCount = filteredItems.filter(i => norm(i.status) === 'DIFFER').length;
+    const isFiltered = searchQuery || severityFilter !== 'all' || showOnlyDifferences;
+    const showFilteredCounts = isFiltered && filteredDifferCount !== section.differCount;
+
+    // Auto-expand logic for important errors
+    const shouldAutoExpand = () => {
+      if (section.sectionName === 'Columns') {
+        return section.driftItems.some(item => norm(item.severity) === 'ERROR');
+      }
+      if (section.sectionName === 'Indexes') {
+        return section.driftItems.some(item => 
+          item.attribute === 'exists' && 
+          item.sourceValue === true && 
+          item.targetValue === false
+        );
+      }
+      if (section.sectionName === 'Constraints') {
+        return section.differCount > 0;
+      }
+      return section.differCount > 0;
+    };
 
     return (
-      <Accordion defaultExpanded={section.differCount > 0} id={section.sectionName.toLowerCase() + '-section'}>
+      <Accordion defaultExpanded={shouldAutoExpand()} id={section.sectionName.toLowerCase() + '-section'}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
             <Typography variant="h6">{section.sectionName}</Typography>
@@ -346,7 +554,10 @@ export default function EnvironmentComparisonPanel({
               />
               {section.differCount > 0 && (
                 <Chip 
-                  label={`${section.differCount} Differ`} 
+                  label={showFilteredCounts 
+                    ? `${filteredDifferCount} of ${section.differCount} Differ` 
+                    : `${section.differCount} Differ`
+                  } 
                   color="error" 
                   size="small" 
                 />
@@ -356,6 +567,14 @@ export default function EnvironmentComparisonPanel({
                   label={`${section.unknownCount} Unknown`} 
                   color="default" 
                   size="small" 
+                />
+              )}
+              {showFilteredCounts && (
+                <Chip 
+                  label="Filtered" 
+                  variant="outlined"
+                  size="small"
+                  color="info"
                 />
               )}
             </Box>
@@ -373,7 +592,14 @@ export default function EnvironmentComparisonPanel({
           )}
 
           {filteredItems.length === 0 ? (
-            <Alert severity="success">No differences detected</Alert>
+            searchQuery ? (
+              <Alert severity="info">
+                No items match your search "{searchQuery}" in this section. 
+                Try adjusting your filters or search term.
+              </Alert>
+            ) : (
+              <Alert severity="success">No differences detected</Alert>
+            )
           ) : (
             <>
               {!showOnlyDifferences && section.matchCount > 100 && (
@@ -958,6 +1184,14 @@ export default function EnvironmentComparisonPanel({
             >
               Copy All Diagnostics
             </Button>
+            <Button
+              variant={exportSuccess ? 'contained' : 'outlined'}
+              color={exportSuccess ? 'success' : 'primary'}
+              startIcon={<DownloadIcon />}
+              onClick={handleExportForJira}
+            >
+              {exportSuccess ? 'Exported!' : 'Export for JIRA'}
+            </Button>
           </Box>
           
           {/* Comparison Mode Banner */}
@@ -1009,21 +1243,182 @@ export default function EnvironmentComparisonPanel({
                   </FormControl>
                 </Grid>
                 <Grid item xs={12} sm={4}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    label="Search objects"
-                    placeholder="e.g., cart_item"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    InputProps={{
-                      startAdornment: <SearchIcon sx={{ mr: 1, color: 'action.disabled' }} />
-                    }}
-                  />
+                  <Box sx={{ position: 'relative' }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Search objects"
+                      placeholder="cart_item or table:cart_* or column:promo_code"
+                      value={searchQuery}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                      onFocus={() => searchQuery.length >= 2 && generateSearchSuggestions(searchQuery)}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                      InputProps={{
+                        startAdornment: <SearchIcon sx={{ mr: 1, color: 'action.disabled' }} />
+                      }}
+                      helperText="Supports: plain text, table:, column:, index:, constraint:, wildcards (*)"
+                    />
+                    
+                    {/* Typeahead suggestions */}
+                    {showSuggestions && (
+                      <Paper 
+                        sx={{ 
+                          position: 'absolute', 
+                          top: '100%', 
+                          left: 0, 
+                          right: 0, 
+                          zIndex: 1300,
+                          maxHeight: 300,
+                          overflowY: 'auto',
+                          overflowX: 'hidden',
+                          mt: 1,
+                          pt: 0.5,
+                          boxShadow: 6,
+                          borderRadius: 1
+                        }}
+                        elevation={8}
+                      >
+                        <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
+                          {hasAnySuggestions ? (
+                            <>
+                              {searchSuggestions.tables.length > 0 && (
+                                <>
+                                  <Typography variant="caption" sx={{ px: 2, pt: 1, pb: 0.5, display: 'block', fontWeight: 'bold', color: 'text.secondary', bgcolor: 'grey.50', position: 'sticky', top: 0, zIndex: 1 }}>
+                                    Tables
+                                  </Typography>
+                                  {searchSuggestions.tables.map((table, idx) => (
+                                    <MenuItem 
+                                      key={`table-${idx}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        setSearchQuery(table);
+                                        setShowSuggestions(false);
+                                      }}
+                                      sx={{ fontSize: '0.875rem', py: 1 }}
+                                    >
+                                      <code>{table}</code>
+                                    </MenuItem>
+                                  ))}
+                                </>
+                              )}
+                              
+                              {searchSuggestions.columns.length > 0 && (
+                                <>
+                                  <Typography variant="caption" sx={{ px: 2, pt: 1, pb: 0.5, display: 'block', fontWeight: 'bold', color: 'text.secondary', bgcolor: 'grey.50', position: 'sticky', top: 0, zIndex: 1 }}>
+                                    Columns
+                                  </Typography>
+                                  {searchSuggestions.columns.map((col, idx) => (
+                                    <MenuItem 
+                                      key={`col-${idx}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        setSearchQuery(col);
+                                        setShowSuggestions(false);
+                                      }}
+                                      sx={{ fontSize: '0.875rem', py: 1 }}
+                                    >
+                                      <code>{col}</code>
+                                    </MenuItem>
+                                  ))}
+                                </>
+                              )}
+                              
+                              {searchSuggestions.indexes.length > 0 && (
+                                <>
+                                  <Typography variant="caption" sx={{ px: 2, pt: 1, pb: 0.5, display: 'block', fontWeight: 'bold', color: 'text.secondary', bgcolor: 'grey.50', position: 'sticky', top: 0, zIndex: 1 }}>
+                                    Indexes
+                                  </Typography>
+                                  {searchSuggestions.indexes.map((idx, i) => (
+                                    <MenuItem 
+                                      key={`idx-${i}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        setSearchQuery(idx);
+                                        setShowSuggestions(false);
+                                      }}
+                                      sx={{ fontSize: '0.875rem', py: 1 }}
+                                    >
+                                      <code>{idx}</code>
+                                    </MenuItem>
+                                  ))}
+                                </>
+                              )}
+                              
+                              {searchSuggestions.constraints.length > 0 && (
+                                <>
+                                  <Typography variant="caption" sx={{ px: 2, pt: 1, pb: 0.5, display: 'block', fontWeight: 'bold', color: 'text.secondary', bgcolor: 'grey.50', position: 'sticky', top: 0, zIndex: 1 }}>
+                                    Constraints
+                                  </Typography>
+                                  {searchSuggestions.constraints.map((con, idx) => (
+                                    <MenuItem 
+                                      key={`con-${idx}`}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        setSearchQuery(con);
+                                        setShowSuggestions(false);
+                                      }}
+                                      sx={{ fontSize: '0.875rem', py: 1 }}
+                                    >
+                                      <code>{con}</code>
+                                    </MenuItem>
+                                  ))}
+                                </>
+                              )}
+                            </>
+                          ) : (
+                            <Typography
+                              variant="body2"
+                              sx={{ px: 2, py: 1, color: 'text.secondary' }}
+                            >
+                              No matching objects yet. Keep typing (min 2 characters) or adjust filters.
+                            </Typography>
+                          )}
+                        </Box>
+                      </Paper>
+                    )}
+                  </Box>
                 </Grid>
               </Grid>
             </CardContent>
           </Card>
+
+          {/* Search Results Summary */}
+          {searchQuery && comparisonResult && (() => {
+            const allMatchedItems = comparisonResult.driftSections.map(section => ({
+              sectionName: section.sectionName,
+              items: filterDriftItems(section.driftItems).filter(item => norm(item.status) !== 'MATCH')
+            })).filter(result => result.items.length > 0);
+            
+            const totalMatches = allMatchedItems.reduce((sum, result) => sum + result.items.length, 0);
+            
+            return totalMatches > 0 ? (
+              <Alert severity="info" sx={{ mb: 3 }}>
+                <Typography variant="body1" sx={{ fontWeight: 'bold', mb: 1 }}>
+                  Search Results for "{searchQuery}": {totalMatches} item{totalMatches !== 1 ? 's' : ''} found
+                </Typography>
+                <Box component="ul" sx={{ margin: 0, paddingLeft: 2 }}>
+                  {allMatchedItems.map((result, idx) => (
+                    <li key={idx}>
+                      <Typography variant="body2">
+                        <strong>{result.sectionName}:</strong> {result.items.length} item{result.items.length !== 1 ? 's' : ''}
+                        {result.items.length <= 3 && (
+                          <span style={{ color: '#666', marginLeft: '8px' }}>
+                            ({result.items.map(item => item.objectName).join(', ')})
+                          </span>
+                        )}
+                      </Typography>
+                    </li>
+                  ))}
+                </Box>
+              </Alert>
+            ) : (
+              <Alert severity="warning" sx={{ mb: 3 }}>
+                <Typography variant="body1">
+                  No results found for "{searchQuery}". Try a different search term or check your filters.
+                </Typography>
+              </Alert>
+            );
+          })()}
 
           {/* Capability Matrix Comparison */}
           {renderCapabilityMatrix()}

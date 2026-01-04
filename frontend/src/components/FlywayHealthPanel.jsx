@@ -22,7 +22,8 @@ import {
 import {
   ExpandMore as ExpandMoreIcon,
   ContentCopy as ContentCopyIcon,
-  Warning as WarningIcon
+  Warning as WarningIcon,
+  Download as DownloadIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 
@@ -34,6 +35,7 @@ export default function FlywayHealthPanel({ data, connectionId }) {
     migrationHistory: false
   });
   const [copySuccess, setCopySuccess] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
   const [migrationHistory, setMigrationHistory] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
@@ -171,6 +173,27 @@ export default function FlywayHealthPanel({ data, connectionId }) {
     }
   };
 
+  const handleExportDiagnostics = async () => {
+    if (!connectionId) return;
+    try {
+      const response = await apiService.exportDiagnostics(connectionId);
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `db-doctor-diagnostics-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to export diagnostics:', err);
+    }
+  };
+
   const hasWarnings = warnings.length > 0;
   const hasDrift = warnings.some(w => w.code === 'CREDENTIAL_DRIFT' || w.code === 'MULTIPLE_INSTALLERS');
 
@@ -282,6 +305,15 @@ export default function FlywayHealthPanel({ data, connectionId }) {
               color={copySuccess ? 'success' : 'primary'}
             >
               {copySuccess ? 'Copied!' : 'Copy Diagnostics'}
+            </Button>
+            <Button
+              size="small"
+              startIcon={<DownloadIcon />}
+              onClick={handleExportDiagnostics}
+              variant={exportSuccess ? 'contained' : 'outlined'}
+              color={exportSuccess ? 'success' : 'primary'}
+            >
+              {exportSuccess ? 'Exported!' : 'Export for JIRA'}
             </Button>
           </Box>
         </Box>

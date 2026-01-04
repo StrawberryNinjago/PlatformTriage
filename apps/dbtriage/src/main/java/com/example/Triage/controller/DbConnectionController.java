@@ -139,4 +139,19 @@ public class DbConnectionController {
                     .body(new ErrorResponse("LIST_CONNECTIONS_FAILED", LogUtils.safeMessage(e)));
         }
     }
+
+    @GetMapping("/diagnostics/export")
+    public ResponseEntity<?> exportDiagnostics(@RequestParam String connectionId) {
+        log.info("#exportDiagnostics: Exporting diagnostics for connectionId: {}", connectionId);
+        try {
+            var resp = connectionHandler.exportDiagnostics(connectionId);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("EXPORT_DIAGNOSTICS_FAILED", LogUtils.safeMessage(e)));
+        }
+    }
 }

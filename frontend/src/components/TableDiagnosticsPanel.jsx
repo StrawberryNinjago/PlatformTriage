@@ -31,7 +31,8 @@ import {
   Warning as WarningIcon,
   Error as ErrorIcon,
   Info as InfoIcon,
-  KeyboardArrowDown as KeyboardArrowDownIcon
+  KeyboardArrowDown as KeyboardArrowDownIcon,
+  Download as DownloadIcon
 } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 
@@ -40,6 +41,7 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
   const [loadingPrivileges, setLoadingPrivileges] = useState(false);
   const [privilegesChecked, setPrivilegesChecked] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [exportSuccess, setExportSuccess] = useState(false);
   const [expandedSections, setExpandedSections] = useState({
     indexes: false,
     constraints: false,
@@ -334,6 +336,27 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
     }
   };
 
+  const handleExportDiagnostics = async () => {
+    if (!connectionId) return;
+    try {
+      const response = await apiService.exportDiagnostics(connectionId);
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `db-doctor-diagnostics-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      setExportSuccess(true);
+      setTimeout(() => setExportSuccess(false), 2000);
+    } catch (err) {
+      console.error('Failed to export diagnostics:', err);
+    }
+  };
+
   const DiagnosticPill = ({ icon, label, status, onClick }) => {
     const colors = {
       success: { bg: '#e8f5e9', border: '#4caf50', text: '#2e7d32' },
@@ -399,15 +422,26 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
         <Typography variant="h6" sx={{ mb: 1 }}>
           Table: {schema}.{table}
         </Typography>
-        <Button
-          size="small"
-          startIcon={<ContentCopyIcon />}
-          onClick={handleCopyDiagnostics}
-          variant={copySuccess ? 'contained' : 'outlined'}
-          color={copySuccess ? 'success' : 'primary'}
-        >
-          {copySuccess ? 'Copied!' : 'Copy Diagnostics'}
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            size="small"
+            startIcon={<ContentCopyIcon />}
+            onClick={handleCopyDiagnostics}
+            variant={copySuccess ? 'contained' : 'outlined'}
+            color={copySuccess ? 'success' : 'primary'}
+          >
+            {copySuccess ? 'Copied!' : 'Copy Diagnostics'}
+          </Button>
+          <Button
+            size="small"
+            startIcon={<DownloadIcon />}
+            onClick={handleExportDiagnostics}
+            variant={exportSuccess ? 'contained' : 'outlined'}
+            color={exportSuccess ? 'success' : 'primary'}
+          >
+            {exportSuccess ? 'Exported!' : 'Export for JIRA'}
+          </Button>
+        </Box>
       </Box>
 
       {/* Diagnostics Summary Strip */}

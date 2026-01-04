@@ -8,6 +8,7 @@ import com.example.Triage.model.response.DbConnectionResponse;
 import com.example.Triage.model.response.DbFlywayHealthResponse;
 import com.example.Triage.model.response.DbIdentityResponse;
 import com.example.Triage.model.response.DbSummaryResponse;
+import com.example.Triage.model.response.ExportDiagnosticsResponse;
 import com.example.Triage.service.db.DbConnectionRegistry;
 import com.example.Triage.service.db.DbConnectionService;
 import com.example.Triage.service.db.DbFlywayService;
@@ -21,6 +22,8 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -132,5 +135,89 @@ public class DbConnectionHandler {
                         ctx.schema(),
                         ctx.createdAt().toString()))
                 .collect(Collectors.toList());
+    }
+
+    public ExportDiagnosticsResponse exportDiagnostics(String connectionId) {
+        log.info("#exportDiagnostics: Exporting diagnostics for connectionId: {}", connectionId);
+        var ctx = DbConnectionUtils.getCtx(registry, connectionId);
+        
+        try {
+            // Get identity
+            var identity = identityService.getIdentity(ctx);
+            
+            // Get flyway health
+            var flywayHealth = flywayService.getFlywayHealth(ctx);
+            
+            // Get summary for schema counts
+            var summary = summaryService.getSummary(ctx);
+            
+            // Build metadata
+            var metadata = ExportDiagnosticsResponse.MetadataDto.builder()
+                    .generatedAt(OffsetDateTime.now())
+                    .tool("PlatformTriage - DB Doctor")
+                    .environment("unknown")
+                    .connectionId(connectionId)
+                    .build();
+            
+            // Build connection info
+            var connectionDto = ExportDiagnosticsResponse.ConnectionDto.builder()
+                    .engine("postgres")
+                    .host(ctx.host())
+                    .port(ctx.port())
+                    .database(identity.database())
+                    .schema(identity.schema() != null ? identity.schema() : "public")
+                    .username(identity.currentUser())
+                    .sslMode(ctx.sslMode() != null ? ctx.sslMode() : "disable")
+                    .build();
+            
+            // Build flyway info
+            var flywayDto = ExportDiagnosticsResponse.FlywayDto.builder()
+                    .status(flywayHealth.status().toString())
+                    .currentVersion(flywayHealth.flywaySummary() != null && 
+                                   flywayHealth.flywaySummary().latestApplied() != null ? 
+                                   flywayHealth.flywaySummary().latestApplied().version() : null)
+                    .installedBy(flywayHealth.flywaySummary() != null && 
+                                flywayHealth.flywaySummary().latestApplied() != null ? 
+                                flywayHealth.flywaySummary().latestApplied().installedBy() : null)
+                    .lastMigration(flywayHealth.flywaySummary() != null && 
+                                  flywayHealth.flywaySummary().latestApplied() != null ? 
+                                  flywayHealth.flywaySummary().latestApplied().description() : null)
+                    .credentialDrift(flywayHealth.warnings() != null && 
+                                   !flywayHealth.warnings().isEmpty())
+                    .build();
+            
+            // Build schema summary (counts only)
+            var schemaSummary = ExportDiagnosticsResponse.SchemaSummaryExportDto.builder()
+                    .tables(summary.publicSchema() != null ? summary.publicSchema().tableCount() : 0)
+                    .indexes(null)  // Not available in current summary
+                    .constraints(null)  // Not available in current summary
+                    .build();
+            
+            // Build findings from warnings
+            List<ExportDiagnosticsResponse.FindingDto> findings = new ArrayList<>();
+            if (flywayHealth.warnings() != null) {
+                for (var warning : flywayHealth.warnings()) {
+                    findings.add(ExportDiagnosticsResponse.FindingDto.builder()
+                            .type(warning.code())
+                            .severity("WARN")
+                            .message(warning.message())
+                            .build());
+                }
+            }
+            
+            // Build export response
+            return ExportDiagnosticsResponse.builder()
+                    .metadata(metadata)
+                    .db(connectionDto)
+                    .flyway(flywayDto)
+                    .schemaSummary(schemaSummary)
+                    .compare(null)  // No comparison data for single connection
+                    .findings(findings)
+                    .build();
+                    
+        } catch (Exception e) {
+            log.error("#exportDiagnostics: Export failed for connectionId: {}", connectionId, e);
+            throw new ConnectionNotFoundException("EXPORT_DIAGNOSTICS_FAILED.");
+        }
     }
 }
