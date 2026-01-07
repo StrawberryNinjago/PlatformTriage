@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kv-misconfig-app
+  namespace: cart
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kv-misconfig-app
+  template:
+    metadata:
+      labels:
+        app: kv-misconfig-app
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          env:
+            - name: KEYVAULT_NAME
+              value: "wrong-kv-name"   # purely for demo / storytelling
+            - name: KV_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kv-secrets-does-not-exist   # ❌ intentional
+                  key: token

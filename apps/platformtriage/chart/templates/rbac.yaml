@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: platformtriage
+  namespace: cart
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platformtriage-readonly
+  namespace: cart
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  # Optional but recommended soon:
+  # - apiGroups: [""]
+  #   resources: ["services", "endpoints", "configmaps"]
+  #   verbs: ["get", "list", "watch"]
+  # - apiGroups: ["networking.k8s.io"]
+  #   resources: ["ingresses"]
+  #   verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platformtriage-readonly-binding
+  namespace: cart
+subjects:
+  - kind: ServiceAccount
+    name: platformtriage
+    namespace: cart
+roleRef:
+  kind: Role
+  name: platformtriage-readonly
+  apiGroup: rbac.authorization.k8s.io
+
+spec:
+  template:
+    spec:
+      serviceAccountName: platformtriage
+
