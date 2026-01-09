@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 
 import com.example.platformtriage.model.dto.EndpointsInfo;
 import com.example.platformtriage.model.dto.EventInfo;
+import com.example.platformtriage.model.dto.Evidence;
 import com.example.platformtriage.model.dto.Finding;
 import com.example.platformtriage.model.dto.Health;
 import com.example.platformtriage.model.dto.Objects;
@@ -23,6 +24,7 @@ import com.example.platformtriage.model.dto.PodInfo;
 import com.example.platformtriage.model.dto.ServiceInfo;
 import com.example.platformtriage.model.dto.Target;
 import com.example.platformtriage.model.dto.Workload;
+import com.example.platformtriage.model.enums.FailureCode;
 import com.example.platformtriage.model.enums.OverallStatus;
 import com.example.platformtriage.model.enums.Severity;
 import com.example.platformtriage.model.response.DeploymentSummaryResponse;
@@ -185,27 +187,42 @@ public class DeploymentDoctorService {
                 .map(e -> toEndpointsInfo(e.getKey(), e.getValue()))
                 .toList();
 
-        // Findings
+        // Findings - Platform Failure Taxonomy (MVP 8 codes + Risk signals)
         List<Finding> findings = new ArrayList<>();
-        findings.addAll(findingsFromPods(podInfos));
+
+        // Run all detection rules - ERROR severity (failures)
+        findings.addAll(detectBadConfig(podInfos, relatedEvents));
+        findings.addAll(detectExternalSecretResolutionFailed(podInfos, relatedEvents));
+        findings.addAll(detectImagePullFailed(podInfos, relatedEvents));
+        findings.addAll(detectReadinessCheckFailed(podInfos, relatedEvents));
+        findings.addAll(detectCrashLoop(podInfos, relatedEvents, backoffPods));
+        findings.addAll(detectServiceSelectorMismatch(services, endpointsByService, pods));
+        findings.addAll(detectInsufficientResources(podInfos, relatedEvents));
+        findings.addAll(detectRbacDenied(relatedEvents));
+
+        // Run risk signal detection - WARN severity (advisory)
+        findings.addAll(detectPodRestarts(podInfos));
+        findings.addAll(detectPodSandboxRecycle(relatedEvents));
+
+        // Legacy findings (for backward compatibility)
         findings.addAll(findingsFromDeployments(deployments.values()));
-        findings.addAll(findingsFromServicesAndEndpoints(services, endpointsByService));
-        findings.addAll(findingsFromEventsForCrashLoop(relatedEvents, podNames));
 
         if (pods.isEmpty() && deployments.isEmpty()) {
             findings.add(new Finding(
-                    Severity.INFO,
-                    "NO_MATCHING_OBJECTS",
+                    FailureCode.NO_MATCHING_OBJECTS,
+                    "No matching objects",
                     "No pods or deployments matched the provided selector/release in this namespace.",
-                    null,
-                    List.of("ns/" + namespace)
+                    List.of(new Evidence("Namespace", namespace)),
+                    List.of(
+                            "Verify the selector or release parameter is correct.",
+                            "Check that resources exist in the namespace: kubectl get pods,deployments -n " + namespace,
+                            "Confirm you're connected to the correct cluster and namespace."
+                    )
             ));
         }
 
-        // Check for Key Vault / external secret resolution failures
-        findings.addAll(findingsFromExternalSecrets(podInfos, relatedEvents));
-
         findings = normalizeFindings(findings);
+        Finding primaryFailure = selectPrimaryFailure(findings);
         OverallStatus overall = computeOverall(findings);
         String deploymentsReady = computeDeploymentsReadyString(deployments.values());
 
@@ -214,6 +231,7 @@ public class DeploymentDoctorService {
                 new Target(namespace, effectiveSelector, release),
                 new Health(overall, deploymentsReady, breakdown),
                 findings,
+                primaryFailure, // The highest-priority finding for primary decision
                 new Objects(workloadInfos, podInfos, relatedEvents, serviceInfos, endpointsInfos)
         );
     }
@@ -493,40 +511,478 @@ public class DeploymentDoctorService {
         return new EndpointsInfo(serviceName, ready, notReady);
     }
 
-    // -------------------- findings --------------------
-    private List<Finding> findingsFromPods(List<PodInfo> pods) {
-        List<Finding> out = new ArrayList<>();
+    // -------------------- Platform Failure Taxonomy Detection Rules --------------------
+    /**
+     * A. BAD_CONFIG Trigger: CreateContainerConfigError | Events:
+     * secret/configmap not found (non-CSI)
+     */
+    private List<Finding> detectBadConfig(List<PodInfo> pods, List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
 
-        List<String> pull = pods.stream()
-                .filter(p -> "ImagePullBackOff".equalsIgnoreCase(p.reason()) || "ErrImagePull".equalsIgnoreCase(p.reason()))
-                .map(p -> "pod/" + p.name())
-                .toList();
-        if (!pull.isEmpty()) {
-            out.add(new Finding(Severity.HIGH, "IMAGE_PULL",
-                    pull.size() + " pod(s) failing to pull image (ImagePullBackOff/ErrImagePull).", null, pull));
-        }
-
-        List<String> badConfig = pods.stream()
+        // Pattern 1: Pod container state waiting reason: CreateContainerConfigError
+        pods.stream()
                 .filter(p -> "CreateContainerConfigError".equalsIgnoreCase(p.reason()))
-                .map(p -> "pod/" + p.name())
-                .toList();
-        if (!badConfig.isEmpty()) {
-            out.add(new Finding(Severity.HIGH, "BAD_CONFIG",
-                    badConfig.size() + " pod(s) have CreateContainerConfigError (often missing secret/config).", null, badConfig));
+                .forEach(p -> evidence.add(new Evidence("Pod", p.name())));
+
+        // Pattern 2: Events with secret/configmap not found (but NOT CSI-related)
+        events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> {
+                    String msg = e.message() != null ? e.message().toLowerCase() : "";
+                    String reason = e.reason() != null ? e.reason() : "";
+
+                    // Look for secret/configmap errors but exclude CSI driver errors
+                    boolean hasConfigError = msg.contains("secret") && msg.contains("not found")
+                            || msg.contains("configmap") && msg.contains("not found")
+                            || msg.contains("mountvolume.setup failed")
+                            || "FailedMount".equalsIgnoreCase(reason);
+
+                    // Exclude if it's CSI-related (those are EXTERNAL_SECRET_RESOLUTION_FAILED)
+                    boolean isCsiRelated = msg.contains("secrets-store.csi")
+                            || msg.contains("secretproviderclass")
+                            || msg.contains("keyvault")
+                            || msg.contains("key vault");
+
+                    return hasConfigError && !isCsiRelated;
+                })
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
         }
 
-        List<String> notReady = pods.stream()
-                .filter(p -> "Running".equalsIgnoreCase(p.phase()) && !p.ready())
-                .map(p -> "pod/" + p.name())
-                .toList();
-        if (!notReady.isEmpty()) {
-            out.add(new Finding(Severity.MED, "PODS_NOT_READY",
-                    notReady.size() + " pod(s) running but not Ready.", null, notReady));
-        }
-
-        return out;
+        return List.of(new Finding(
+                FailureCode.BAD_CONFIG,
+                "Bad configuration",
+                "Pod cannot start due to missing or invalid Kubernetes configuration (Secret/ConfigMap/volume references).",
+                evidence,
+                List.of(
+                        "Verify referenced Secret/ConfigMap exists in the namespace: kubectl get secrets,configmaps -n <namespace>",
+                        "Verify key names in Secret/ConfigMap match the keys referenced in pod spec.",
+                        "Check volumeMount names match volume definitions.",
+                        "If using Helm: verify values rendered to expected resource names.",
+                        "Review pod spec for typos in secret/configmap references."
+                )
+        ));
     }
 
+    /**
+     * B. EXTERNAL_SECRET_RESOLUTION_FAILED Trigger: CSI mount failures |
+     * SecretProviderClass errors | Key Vault access issues
+     */
+    private List<Finding> detectExternalSecretResolutionFailed(List<PodInfo> pods, List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern 1: Pods stuck in CreateContainerConfigError (may be Key Vault related)
+        List<String> configErrorPods = pods.stream()
+                .filter(p -> "CreateContainerConfigError".equalsIgnoreCase(p.reason()))
+                .map(PodInfo::name)
+                .toList();
+
+        // Pattern 2: CSI driver mount failures from events
+        boolean hasCsiEvidence = events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> {
+                    String reason = e.reason() != null ? e.reason() : "";
+                    String message = e.message() != null ? e.message().toLowerCase() : "";
+
+                    return ("FailedMount".equalsIgnoreCase(reason)
+                            || "FailedAttachVolume".equalsIgnoreCase(reason)
+                            || "MountVolume.SetUp failed".equalsIgnoreCase(reason))
+                            && (message.contains("secrets-store.csi.k8s.io")
+                            || message.contains("secretproviderclass")
+                            || message.contains("keyvault")
+                            || message.contains("key vault")
+                            || message.contains("azure") && message.contains("vault")
+                            || message.contains("failed to mount")
+                            || message.contains("permission denied")
+                            || message.contains("forbidden"));
+                })
+                .peek(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())))
+                .findAny()
+                .isPresent();
+
+        // Only add pod evidence if we have CSI-related events
+        if (hasCsiEvidence) {
+            configErrorPods.forEach(podName -> evidence.add(new Evidence("Pod", podName)));
+        }
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.EXTERNAL_SECRET_RESOLUTION_FAILED,
+                "External secret mount failed (CSI / Key Vault)",
+                "Pod cannot mount external secrets via SecretProviderClass; container will not start.",
+                evidence,
+                List.of(
+                        "Confirm SecretProviderClass exists in the same namespace: kubectl get secretproviderclass -n <namespace>",
+                        "Verify Key Vault name/URI and object names match exactly (case-sensitive).",
+                        "Verify workload identity/managed identity has 'Get' permission on secrets in Key Vault.",
+                        "Check tenant ID and client ID match in federated identity binding.",
+                        "Confirm CSI driver is installed: kubectl get pods -n kube-system | grep csi-secrets-store",
+                        "Check pod service account is correctly annotated for workload identity."
+                )
+        ));
+    }
+
+    /**
+     * C. IMAGE_PULL_FAILED Trigger: ImagePullBackOff | ErrImagePull | Events
+     * with pull failures
+     */
+    private List<Finding> detectImagePullFailed(List<PodInfo> pods, List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern 1: Pod waiting reasons
+        pods.stream()
+                .filter(p -> "ImagePullBackOff".equalsIgnoreCase(p.reason())
+                || "ErrImagePull".equalsIgnoreCase(p.reason()))
+                .forEach(p -> evidence.add(new Evidence("Pod", p.name())));
+
+        // Pattern 2: Events with image pull failures
+        events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> {
+                    String reason = e.reason() != null ? e.reason() : "";
+                    String message = e.message() != null ? e.message().toLowerCase() : "";
+
+                    return "Failed".equalsIgnoreCase(reason) && message.contains("pull")
+                            || message.contains("manifest unknown")
+                            || message.contains("unauthorized")
+                            || message.contains("image pull")
+                            || "ErrImagePull".equalsIgnoreCase(reason)
+                            || "ImagePullBackOff".equalsIgnoreCase(reason);
+                })
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.IMAGE_PULL_FAILED,
+                "Image pull failed",
+                "Container image cannot be pulled (authentication, missing tag, or registry access issue).",
+                evidence,
+                List.of(
+                        "Verify image tag exists in the registry.",
+                        "Verify imagePullSecrets are configured if using a private registry.",
+                        "Check network/egress policy allows access to the registry.",
+                        "Confirm registry URL is correct (typos in image name/tag).",
+                        "If using ACR: verify AKS has pull permissions via managed identity or service principal.",
+                        "Test image pull manually: docker pull <image:tag>"
+                )
+        ));
+    }
+
+    /**
+     * D. READINESS_CHECK_FAILED Trigger: Pod Running but Ready=False for >60s |
+     * Readiness probe failures
+     */
+    private List<Finding> detectReadinessCheckFailed(List<PodInfo> pods, List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern 1: Pods running but not ready
+        pods.stream()
+                .filter(p -> "Running".equalsIgnoreCase(p.phase()) && !p.ready())
+                .forEach(p -> evidence.add(new Evidence("Pod", p.name())));
+
+        // Pattern 2: Readiness probe failure events
+        events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> {
+                    String message = e.message() != null ? e.message().toLowerCase() : "";
+                    return message.contains("readiness probe failed")
+                            || message.contains("liveness probe failed");
+                })
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.READINESS_CHECK_FAILED,
+                "Readiness check failed",
+                "Pods are running but never become Ready (readiness probe or application health check failing).",
+                evidence,
+                List.of(
+                        "Verify readiness probe path/port matches the application endpoint.",
+                        "Check application logs for startup errors: kubectl logs <pod> -n <namespace>",
+                        "Verify dependencies are reachable (database, cache, external APIs).",
+                        "Confirm service port mapping matches container port.",
+                        "Test readiness endpoint manually: kubectl exec <pod> -- wget -O- localhost:<port>/<path>",
+                        "Check if initialDelaySeconds is too short for app startup time."
+                )
+        ));
+    }
+
+    /**
+     * E. CRASH_LOOP Trigger: CrashLoopBackOff | Restarts > 0 | BackOff events
+     */
+    private List<Finding> detectCrashLoop(List<PodInfo> pods, List<EventInfo> events, Set<String> backoffPods) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern 1: Pods with CrashLoopBackOff reason or in backoff set
+        pods.stream()
+                .filter(p -> "CrashLoopBackOff".equalsIgnoreCase(p.reason())
+                || backoffPods.contains(p.name()))
+                .forEach(p -> evidence.add(new Evidence("Pod", p.name(),
+                "Restarts: " + p.restarts() + ", Reason: " + p.reason())));
+
+        // Pattern 2: BackOff events
+        events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> "BackOff".equalsIgnoreCase(e.reason())
+                || (e.message() != null && e.message().contains("Back-off restarting failed container")))
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.CRASH_LOOP,
+                "Crash loop detected",
+                "Containers are repeatedly crashing (CrashLoopBackOff, OOM, or non-zero exit codes).",
+                evidence,
+                List.of(
+                        "Inspect last termination reason: kubectl describe pod <pod> -n <namespace>",
+                        "Check logs from previous container instance: kubectl logs <pod> -n <namespace> --previous",
+                        "Look for OOMKilled (out of memory): increase memory limits if needed.",
+                        "Validate required environment variables are set correctly.",
+                        "Check for application startup errors or missing dependencies.",
+                        "Review exit codes: 137 = OOMKilled, 143 = SIGTERM, others = app error"
+                )
+        ));
+    }
+
+    /**
+     * F. SERVICE_SELECTOR_MISMATCH Trigger: Service exists, but endpoints = 0
+     * while pods exist
+     */
+    private List<Finding> detectServiceSelectorMismatch(List<V1Service> services,
+            Map<String, V1Endpoints> endpointsByService,
+            List<V1Pod> pods) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        for (V1Service svc : services) {
+            String name = svc.getMetadata() != null ? svc.getMetadata().getName() : null;
+            if (!StringUtils.hasText(name)) {
+                continue;
+            }
+
+            V1Endpoints eps = endpointsByService.get(name);
+            int ready = countReadyAddresses(eps);
+            int notReady = countNotReadyAddresses(eps);
+
+            // Service has no ready endpoints, but pods exist
+            if (ready == 0 && !pods.isEmpty()) {
+                evidence.add(new Evidence("Service", name,
+                        "0 ready endpoints (" + notReady + " not ready)"));
+                evidence.add(new Evidence("Endpoints", name));
+            }
+        }
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.SERVICE_SELECTOR_MISMATCH,
+                "Service selector mismatch",
+                "Service has zero endpoints due to label/selector mismatch or pods not ready.",
+                evidence,
+                List.of(
+                        "Compare Service selector labels vs pod labels: kubectl describe service <service> -n <namespace>",
+                        "Check pod labels: kubectl get pods --show-labels -n <namespace>",
+                        "If pods exist but not Ready, fix readiness issues first.",
+                        "Verify service is in the same namespace as the pods.",
+                        "Test label matching: kubectl get pods -l <selector> -n <namespace>"
+                )
+        ));
+    }
+
+    /**
+     * G. INSUFFICIENT_RESOURCES Trigger: Pod Pending + Unschedulable | Events:
+     * Insufficient cpu/memory
+     */
+    private List<Finding> detectInsufficientResources(List<PodInfo> pods, List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern 1: Pods stuck in Pending
+        pods.stream()
+                .filter(p -> "Pending".equalsIgnoreCase(p.phase()))
+                .forEach(p -> evidence.add(new Evidence("Pod", p.name(), "Phase: Pending")));
+
+        // Pattern 2: Scheduling failure events
+        events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> {
+                    String reason = e.reason() != null ? e.reason() : "";
+                    String message = e.message() != null ? e.message().toLowerCase() : "";
+
+                    return "FailedScheduling".equalsIgnoreCase(reason)
+                            || message.contains("insufficient cpu")
+                            || message.contains("insufficient memory")
+                            || message.contains("unschedulable")
+                            || message.contains("quota exceeded")
+                            || message.contains("evicted")
+                            || message.contains("taint");
+                })
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.INSUFFICIENT_RESOURCES,
+                "Insufficient resources",
+                "Pod scheduling is blocked or evicted due to insufficient CPU/memory, node capacity, or quotas.",
+                evidence,
+                List.of(
+                        "Check resource requests/limits vs node capacity: kubectl describe nodes",
+                        "Check namespace resource quotas: kubectl get resourcequotas -n <namespace>",
+                        "Check node taints/tolerations: kubectl describe nodes | grep Taint",
+                        "View pending pod scheduling issues: kubectl describe pod <pod> -n <namespace>",
+                        "Consider reducing resource requests or scaling cluster nodes.",
+                        "Check for pod disruption budgets that may block evictions."
+                )
+        ));
+    }
+
+    /**
+     * H. RBAC_DENIED Trigger: API responses with Forbidden | RBAC denied events
+     */
+    private List<Finding> detectRbacDenied(List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern: Events indicating RBAC/Forbidden errors
+        events.stream()
+                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> {
+                    String message = e.message() != null ? e.message().toLowerCase() : "";
+                    return message.contains("forbidden")
+                            || message.contains("rbac")
+                            || message.contains("unauthorized")
+                            || message.contains("access denied")
+                            || message.contains("permission denied");
+                })
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.RBAC_DENIED,
+                "RBAC permission denied",
+                "Tool or workload is denied by Kubernetes RBAC for required operations.",
+                evidence,
+                List.of(
+                        "Confirm triage service account has list/get/watch permissions for required resources.",
+                        "Check workload service account permissions: kubectl describe serviceaccount <sa> -n <namespace>",
+                        "Review ClusterRole/Role bindings: kubectl get clusterrolebindings,rolebindings -n <namespace>",
+                        "Test access: kubectl auth can-i <verb> <resource> --as=system:serviceaccount:<namespace>:<sa>",
+                        "Check pod security policies or admission controllers that may block operations."
+                )
+        ));
+    }
+
+    // -------------------- Risk Signal Detection (WARN severity) --------------------
+    /**
+     * RISK SIGNAL: POD_RESTARTS_DETECTED Trigger: Pod is Running + Ready but
+     * has restarts > 0 This indicates transient crashes, config reloads, or
+     * unstable startup
+     */
+    private List<Finding> detectPodRestarts(List<PodInfo> pods) {
+        List<Evidence> evidence = new ArrayList<>();
+        int totalRestarts = 0;
+
+        // Pattern: Pod is Running AND Ready, but has restarted
+        for (PodInfo p : pods) {
+            if ("Running".equalsIgnoreCase(p.phase()) && p.ready() && p.restarts() > 0) {
+                totalRestarts += p.restarts();
+
+                // Build evidence message with restart count
+                String evidenceMsg = p.restarts() + " restart" + (p.restarts() > 1 ? "s" : "") + " (currently Ready)";
+
+                // Try to add termination reason if available
+                if (p.reason() != null && !p.reason().isEmpty()) {
+                    evidenceMsg += " - Last reason: " + p.reason();
+                }
+
+                evidence.add(new Evidence("Pod", p.name(), evidenceMsg));
+            }
+        }
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        // Fix: Use totalRestarts, not evidence.size()
+        String explanation;
+        if (evidence.size() == 1) {
+            explanation = "Pod has restarted " + totalRestarts + " time" + (totalRestarts > 1 ? "s" : "")
+                    + " but is currently running. This may indicate transient crashes, config reloads, or unstable startup behavior.";
+        } else {
+            explanation = evidence.size() + " pods have restarted " + totalRestarts + " total times "
+                    + "but are currently running. This may indicate transient crashes, config reloads, or unstable startup behavior.";
+        }
+
+        return List.of(new Finding(
+                FailureCode.POD_RESTARTS_DETECTED,
+                "Pod restarts detected",
+                explanation,
+                evidence,
+                List.of(
+                        "Review pod logs for crash patterns: kubectl logs <pod> -n <namespace> --previous",
+                        "Check if restarts correlate with deployments or config changes.",
+                        "Verify readiness/liveness probe settings are appropriate for startup time.",
+                        "Look for OOM events (exit code 137): kubectl describe pod <pod> -n <namespace>",
+                        "Consider if restarts are expected (e.g., app restarts on config reload)."
+                )
+        ));
+    }
+
+    /**
+     * RISK SIGNAL: POD_SANDBOX_RECYCLE Trigger: SandboxChanged events (pod
+     * sandbox changed, will be killed and re-created) This is a strong early
+     * smell of instability
+     */
+    private List<Finding> detectPodSandboxRecycle(List<EventInfo> events) {
+        List<Evidence> evidence = new ArrayList<>();
+
+        // Pattern: SandboxChanged events
+        events.stream()
+                .filter(e -> "SandboxChanged".equalsIgnoreCase(e.reason()))
+                .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
+
+        if (evidence.isEmpty()) {
+            return List.of();
+        }
+
+        return List.of(new Finding(
+                FailureCode.POD_SANDBOX_RECYCLE,
+                "Pod sandbox recycled",
+                "Pod sandbox changed and pod will be killed and re-created. "
+                + "This may indicate node-level issues, runtime problems, or network policy changes.",
+                evidence,
+                List.of(
+                        "Check node health: kubectl describe node <node>",
+                        "Review container runtime logs on the node.",
+                        "Check for network policy or CNI changes.",
+                        "Look for node resource pressure or eviction events.",
+                        "Verify pod security policies or admission webhooks."
+                )
+        ));
+    }
+
+    /**
+     * Legacy deployment findings (for backward compatibility)
+     */
     private List<Finding> findingsFromDeployments(Collection<V1Deployment> deployments) {
         List<Finding> out = new ArrayList<>();
 
@@ -548,49 +1004,28 @@ public class DeploymentDoctorService {
 
             if (stuck) {
                 out.add(new Finding(
-                        Severity.HIGH,
-                        "ROLLOUT_STUCK",
+                        FailureCode.ROLLOUT_STUCK,
+                        "Deployment rollout stuck",
                         "Deployment " + name + " rollout appears stuck (ProgressDeadlineExceeded).",
-                        null,
-                        List.of("deployment/" + name)
+                        List.of(new Evidence("Deployment", name)),
+                        List.of(
+                                "Check deployment status: kubectl describe deployment " + name,
+                                "Review replica set status: kubectl get rs -n <namespace>",
+                                "Check for pod-level issues preventing rollout.",
+                                "Consider rolling back: kubectl rollout undo deployment/" + name
+                        )
                 ));
             } else if (desired > 0 && ready == 0) {
                 out.add(new Finding(
-                        Severity.HIGH,
-                        "NO_READY_PODS",
+                        FailureCode.NO_READY_PODS,
+                        "No ready pods",
                         "Deployment " + name + " has 0 ready replicas out of " + desired + ".",
-                        null,
-                        List.of("deployment/" + name)
-                ));
-            }
-        }
-
-        return out;
-    }
-
-    private List<Finding> findingsFromServicesAndEndpoints(List<V1Service> services, Map<String, V1Endpoints> endpointsByService) {
-        List<Finding> out = new ArrayList<>();
-
-        for (V1Service svc : services) {
-            String name = svc.getMetadata() != null ? svc.getMetadata().getName() : null;
-            if (!StringUtils.hasText(name)) {
-                continue;
-            }
-
-            V1Endpoints eps = endpointsByService.get(name);
-            int ready = countReadyAddresses(eps);
-
-            if (ready == 0) {
-                out.add(new Finding(
-                        Severity.HIGH,
-                        "SERVICE_NO_ENDPOINTS",
-                        "Service " + name + " has 0 ready endpoints (selector mismatch, pods not Ready, or wrong namespace).",
+                        List.of(new Evidence("Deployment", name)),
                         List.of(
-                                "Check that service selector labels match pod labels.",
-                                "Verify pods are in Ready state.",
-                                "Confirm service and pods are in the same namespace."
-                        ),
-                        List.of("service/" + name, "endpoints/" + name)
+                                "Check pod status: kubectl get pods -n <namespace>",
+                                "Inspect deployment events: kubectl describe deployment " + name,
+                                "Review pod-level failures (image pull, crash loop, config errors)."
+                        )
                 ));
             }
         }
@@ -598,118 +1033,59 @@ public class DeploymentDoctorService {
         return out;
     }
 
-    private List<Finding> findingsFromEventsForCrashLoop(List<EventInfo> events, Set<String> podNames) {
-        List<String> evidence = events.stream()
-                .filter(e -> "Pod".equals(e.involvedObjectKind()))
-                .filter(e -> podNames.contains(e.involvedObjectName()))
-                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
-                .filter(e -> "BackOff".equalsIgnoreCase(e.reason()))
-                .map(e -> "pod/" + e.involvedObjectName())
-                .distinct()
-                .toList();
-
-        if (evidence.isEmpty()) {
-            return List.of();
-        }
-
-        return List.of(new Finding(
-                Severity.HIGH,
-                "CRASH_LOOP",
-                evidence.size() + " pod(s) restarting with BackOff (CrashLoop-like behavior).",
-                null,
-                evidence
-        ));
-    }
-
-    private List<Finding> findingsFromExternalSecrets(List<PodInfo> pods, List<EventInfo> events) {
-        List<Finding> out = new ArrayList<>();
-
-        // Pattern 1: Pods stuck in CreateContainerConfigError (often Key Vault secret mount issues)
-        List<String> configErrorPods = pods.stream()
-                .filter(p -> "CreateContainerConfigError".equalsIgnoreCase(p.reason()))
-                .map(p -> "pod/" + p.name())
-                .toList();
-
-        // Pattern 2: CSI driver mount failures from events
-        List<String> csiMountFailures = events.stream()
-                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
-                .filter(e -> {
-                    String reason = e.reason();
-                    String message = e.message();
-                    return ("FailedMount".equalsIgnoreCase(reason)
-                            || "FailedAttachVolume".equalsIgnoreCase(reason)
-                            || "MountVolume.SetUp failed".equalsIgnoreCase(reason))
-                            && (message != null && (message.contains("secrets-store.csi.k8s.io")
-                            || message.contains("SecretProviderClass")
-                            || message.contains("keyvault")
-                            || message.contains("Key Vault")
-                            || message.toLowerCase().contains("azure") && message.toLowerCase().contains("vault")
-                            || message.contains("failed to mount")));
-                })
-                .map(e -> "event/" + e.reason() + ":" + e.involvedObjectName())
-                .distinct()
-                .toList();
-
-        // Pattern 3: Secret/ConfigMap not found (if Key Vault syncs to K8s Secret)
-        List<String> secretNotFound = events.stream()
-                .filter(e -> "Warning".equalsIgnoreCase(e.type()))
-                .filter(e -> {
-                    String message = e.message();
-                    return message != null && (message.contains("secret") && message.contains("not found")
-                            || message.contains("configmap") && message.contains("not found")
-                            || message.contains("couldn't find key")
-                            || message.contains("key does not exist"));
-                })
-                .map(e -> "event/" + e.reason() + ":" + e.involvedObjectName())
-                .distinct()
-                .toList();
-
-        // Combine evidence
-        List<String> allEvidence = new ArrayList<>();
-        allEvidence.addAll(configErrorPods);
-        allEvidence.addAll(csiMountFailures);
-        allEvidence.addAll(secretNotFound);
-
-        if (!allEvidence.isEmpty()) {
-            out.add(new Finding(
-                    Severity.HIGH,
-                    "EXTERNAL_SECRET_RESOLUTION_FAILED",
-                    "Pod(s) cannot mount/load external secrets (Key Vault / CSI / SecretProviderClass).",
-                    List.of(
-                            "Check Key Vault name/URI in SecretProviderClass matches actual Key Vault.",
-                            "Verify identity permissions (Workload Identity / managed identity) have 'Get' permission for secrets.",
-                            "Confirm secret object names in Key Vault match exactly (case-sensitive).",
-                            "Ensure SecretProviderClass is in the same namespace as the pod.",
-                            "Check that the Azure tenant ID is correct if using Workload Identity."
-                    ),
-                    allEvidence.stream().distinct().toList()
-            ));
-        }
-
-        return out;
-    }
-
+    /**
+     * Normalize findings by removing redundant ones. Taxonomy-based findings
+     * are mutually exclusive at the primary level, but we may have multiple
+     * findings of different types.
+     */
     private List<Finding> normalizeFindings(List<Finding> findings) {
-        boolean hasCrashLoop = findings.stream().anyMatch(f -> "CRASH_LOOP".equals(f.code()));
-        boolean hasNoReadyPods = findings.stream().anyMatch(f -> "NO_READY_PODS".equals(f.code()));
+        boolean hasCrashLoop = findings.stream().anyMatch(f -> f.code() == FailureCode.CRASH_LOOP);
 
         return findings.stream()
-                // If CRASH_LOOP exists, PODS_NOT_READY is usually redundant (keep it if you prefer)
-                .filter(f -> !(hasCrashLoop && "PODS_NOT_READY".equals(f.code())))
-                // If NO_READY_PODS exists, PODS_NOT_READY is redundant
-                .filter(f -> !(hasNoReadyPods && "PODS_NOT_READY".equals(f.code())))
+                // If both CRASH_LOOP and READINESS_CHECK_FAILED exist, crash is more critical
+                .filter(f -> !(hasCrashLoop && f.code() == FailureCode.READINESS_CHECK_FAILED))
                 .toList();
+    }
+
+    /**
+     * Select the primary failure using priority ordering. Returns the
+     * highest-priority finding (lowest priority number). Priority order (from
+     * spec): 1. EXTERNAL_SECRET_RESOLUTION_FAILED 2. BAD_CONFIG 3.
+     * IMAGE_PULL_FAILED 4. INSUFFICIENT_RESOURCES 5. RBAC_DENIED 6. CRASH_LOOP
+     * 7. READINESS_CHECK_FAILED 8. SERVICE_SELECTOR_MISMATCH
+     */
+    private Finding selectPrimaryFailure(List<Finding> findings) {
+        if (findings.isEmpty()) {
+            return null;
+        }
+
+        return findings.stream()
+                .min(Comparator.comparingInt(Finding::getPriority))
+                .orElse(null);
     }
 
     // -------------------- status helpers --------------------
     private OverallStatus computeOverall(List<Finding> findings) {
-        boolean hasHigh = findings.stream().anyMatch(f -> f.severity() == Severity.HIGH);
-        if (hasHigh) {
+        // Check for NO_MATCHING_OBJECTS first - cannot assess if nothing found
+        boolean noMatching = findings.stream()
+                .anyMatch(f -> f.code() == FailureCode.NO_MATCHING_OBJECTS);
+        if (noMatching) {
+            return OverallStatus.UNKNOWN;
+        }
+
+        // Check for ERROR or legacy HIGH severity
+        // These are actual failures that should fail overall
+        boolean hasError = findings.stream().anyMatch(f
+                -> f.severity() == Severity.ERROR || f.severity() == Severity.HIGH);
+        if (hasError) {
             return OverallStatus.FAIL;
         }
 
-        boolean hasMed = findings.stream().anyMatch(f -> f.severity() == Severity.MED);
-        if (hasMed) {
+        // IMPORTANT: WARN findings do NOT fail overall
+        // They are risk signals / advisory findings
+        // Overall stays PASS (or becomes WARN for backward compat with legacy MED)
+        boolean hasLegacyMed = findings.stream().anyMatch(f -> f.severity() == Severity.MED);
+        if (hasLegacyMed) {
             return OverallStatus.WARN;
         }
 

@@ -23,6 +23,8 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import WarningIcon from '@mui/icons-material/Warning';
 import ErrorIcon from '@mui/icons-material/Error';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import InfoIcon from '@mui/icons-material/Info';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import axios from 'axios';
 
@@ -75,32 +77,60 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     }
   };
 
+  // ⭐ IMPROVEMENT 1: Severity-driven icons (not "check = detected")
   const getSeverityIcon = (severity) => {
     switch ((severity || '').toUpperCase()) {
+      case 'ERROR':
       case 'HIGH':
-        return <ErrorIcon color="error" />;
+        return <ErrorIcon />;
+      case 'WARN':
       case 'MED':
-        return <WarningIcon color="warning" />;
-      case 'LOW':
-        return <WarningIcon color="info" />;
+        return <WarningIcon />;
       case 'INFO':
+      case 'LOW':
+        return <InfoIcon />;
       default:
-        return <CheckCircleIcon color="success" />;
+        return <CheckCircleIcon />;
     }
   };
 
   const getSeverityColor = (severity) => {
     switch ((severity || '').toUpperCase()) {
+      case 'ERROR':
       case 'HIGH':
         return 'error';
+      case 'WARN':
       case 'MED':
         return 'warning';
+      case 'INFO':
       case 'LOW':
         return 'info';
-      case 'INFO':
       default:
         return 'success';
     }
+  };
+
+  // ⭐ IMPROVEMENT 3: Owner badge helper
+  const getOwnerBadge = (owner) => {
+    const configs = {
+      'APP': { label: 'Application', color: '#1976d2' },
+      'PLATFORM': { label: 'Platform', color: '#9c27b0' },
+      'SECURITY': { label: 'Security', color: '#d32f2f' },
+      'UNKNOWN': { label: 'Unknown', color: '#757575' }
+    };
+    const config = configs[owner] || configs.UNKNOWN;
+    return (
+      <Chip
+        label={`Owner: ${config.label}`}
+        size="small"
+        sx={{
+          bgcolor: config.color,
+          color: 'white',
+          fontWeight: 600,
+          fontSize: '0.75rem'
+        }}
+      />
+    );
   };
 
   const getHealthFromSummary = () => {
@@ -108,13 +138,21 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       return {
         overall: 'PASS',
         deploymentsReady: '0/0',
-        pods: { running: 0, pending: 0, crashLoop: 0, imagePullBackOff: 0, notReady: 0 }
+        pods: { running: 0, pending: 0, crashLoop: 0, imagePullBackOff: 0, notReady: 0 },
+        hasWarnings: false
       };
     }
+    
+    // Check if there are WARN severity findings
+    const hasWarnings = summary.findings?.some(f => 
+      f.severity === 'WARN' || f.severity === 'MED'
+    ) || false;
+    
     return {
       overall: summary.health.overall,
       deploymentsReady: summary.health.deploymentsReady,
-      pods: summary.health.pods
+      pods: summary.health.pods,
+      hasWarnings: hasWarnings
     };
   };
 
@@ -225,8 +263,14 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       {summary && !loading && (
         <Box>
 
-          {/* Summary Cards */}
-          <Grid container spacing={3} sx={{ mb: 3 }}>
+          {/* Summary Cards - ⭐ IMPROVEMENT 4: De-emphasize when diagnosis exists */}
+          <Grid container spacing={3} sx={{ 
+            mb: 3,
+            ...(summary.primaryFailure && {
+              opacity: 0.7,
+              filter: 'grayscale(0.3)'
+            })
+          }}>
             <Grid item xs={12} md={3}>
               <Card>
                 <CardContent>
@@ -234,14 +278,66 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                     Overall
                   </Typography>
                   <Chip
-                    label={getHealthFromSummary().overall}
+                    label={
+                      getHealthFromSummary().overall === 'PASS' && getHealthFromSummary().hasWarnings
+                        ? 'PASS (with warnings)'
+                        : getHealthFromSummary().overall
+                    }
                     color={
                       getHealthFromSummary().overall === 'FAIL' ? 'error' : 
-                      getHealthFromSummary().overall === 'WARN' ? 'warning' : 
+                      getHealthFromSummary().overall === 'WARN' ? 'warning' :
+                      getHealthFromSummary().overall === 'UNKNOWN' ? 'default' :
+                      getHealthFromSummary().hasWarnings ? 'warning' :  // PASS but has warnings → yellow
                       'success'
                     }
-                    sx={{ fontWeight: 'bold', fontSize: '1rem' }}
+                    icon={
+                      getHealthFromSummary().overall === 'FAIL' ? <ErrorIcon /> :
+                      getHealthFromSummary().overall === 'WARN' ? <WarningIcon /> :
+                      getHealthFromSummary().overall === 'UNKNOWN' ? <HelpOutlineIcon /> :
+                      getHealthFromSummary().hasWarnings ? <WarningIcon /> :  // PASS with warnings → warning icon
+                      <CheckCircleIcon />
+                    }
+                    sx={{ 
+                      fontWeight: 'bold', 
+                      fontSize: '1rem',
+                      ...(getHealthFromSummary().overall === 'UNKNOWN' && {
+                        border: '2px dashed',
+                        backgroundColor: 'transparent'
+                      })
+                    }}
                   />
+                  
+                  {/* ⭐ POLISH 2: Explanatory microcopy for PASS with warnings */}
+                  {getHealthFromSummary().overall === 'PASS' && getHealthFromSummary().hasWarnings && (
+                    <Typography 
+                      variant="caption" 
+                      color="text.secondary" 
+                      sx={{ 
+                        display: 'block', 
+                        mt: 1, 
+                        fontSize: '0.75rem',
+                        lineHeight: 1.3
+                      }}
+                    >
+                      Deployment is healthy, but advisory signals were detected.
+                    </Typography>
+                  )}
+                  
+                  {/* Also add microcopy for UNKNOWN status */}
+                  {getHealthFromSummary().overall === 'UNKNOWN' && (
+                    <Typography 
+                      variant="caption" 
+                      color="text.secondary" 
+                      sx={{ 
+                        display: 'block', 
+                        mt: 1, 
+                        fontSize: '0.75rem',
+                        lineHeight: 1.3
+                      }}
+                    >
+                      No matching resources found. Check your selector.
+                    </Typography>
+                  )}
                 </CardContent>
               </Card>
             </Grid>
@@ -289,57 +385,246 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             </Grid>
           </Grid>
 
-          {/* Findings Section */}
-          {summary.findings?.length > 0 && (
-            <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-              <Typography variant="h6" sx={{ mb: 2 }}>
-                Findings
-              </Typography>
-              {summary.findings.map((f, idx) => (
-                <Alert 
-                  key={idx} 
-                  severity={getSeverityColor(f.severity)}
-                  sx={{ mb: 1 }}
+          {/* ⭐ IMPROVEMENT 2: Primary Failure/Warning Panel */}
+          {summary.primaryFailure && (
+            <Paper 
+              elevation={4} 
+              sx={{ 
+                p: 3, 
+                mb: 3, 
+                border: '3px solid',
+                borderColor: getSeverityColor(summary.primaryFailure.severity) + '.main',
+                bgcolor: getSeverityColor(summary.primaryFailure.severity) + '.50',
+                background: `linear-gradient(135deg, ${getSeverityColor(summary.primaryFailure.severity) === 'error' ? 'rgba(211, 47, 47, 0.08)' : getSeverityColor(summary.primaryFailure.severity) === 'warning' ? 'rgba(237, 108, 2, 0.08)' : 'rgba(2, 136, 209, 0.08)'} 0%, rgba(255, 255, 255, 0) 100%)`
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <Typography 
+                  variant="overline" 
+                  sx={{ 
+                    fontWeight: 700, 
+                    fontSize: '0.85rem',
+                    letterSpacing: '0.1em',
+                    color: getSeverityColor(summary.primaryFailure.severity) + '.dark'
+                  }}
                 >
-                  <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                    {f.code}
-                  </Typography>
-                  <Typography variant="body2">
-                    {f.message}
-                  </Typography>
-                  
-                  {/* Render hints if present */}
-                  {Array.isArray(f.hints) && f.hints.length > 0 && (
-                    <Box 
+                  {/* ⭐ FIX 1: Different labels based on severity */}
+                  {summary.primaryFailure.severity === 'ERROR' || summary.primaryFailure.severity === 'HIGH' 
+                    ? '🎯 PRIMARY ROOT CAUSE'
+                    : summary.primaryFailure.severity === 'WARN' || summary.primaryFailure.severity === 'MED'
+                    ? '⚠️ TOP WARNING'
+                    : 'ℹ️ NOTABLE SIGNAL'}
+                </Typography>
+              </Box>
+
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
+                <Box sx={{ 
+                  color: getSeverityColor(summary.primaryFailure.severity) + '.main',
+                  fontSize: '2rem',
+                  lineHeight: 1
+                }}>
+                  {getSeverityIcon(summary.primaryFailure.severity)}
+                </Box>
+                <Box sx={{ flex: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="h5" sx={{ fontWeight: 700, color: 'text.primary' }}>
+                      {summary.primaryFailure.title}
+                    </Typography>
+                    <Chip 
+                      label={summary.primaryFailure.code} 
+                      size="small"
                       sx={{ 
-                        mt: 1, 
-                        p: 1, 
-                        bgcolor: 'rgba(33, 150, 243, 0.08)', 
-                        borderRadius: 1,
-                        borderLeft: '3px solid',
-                        borderColor: 'info.main'
+                        fontFamily: 'monospace', 
+                        fontWeight: 600,
+                        bgcolor: getSeverityColor(summary.primaryFailure.severity) + '.main',
+                        color: 'white'
                       }}
-                    >
-                      <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-                        💡 Common causes:
+                    />
+                    {summary.primaryFailure.owner && getOwnerBadge(summary.primaryFailure.owner)}
+                  </Box>
+                  
+                  <Typography variant="body1" sx={{ mb: 2, color: 'text.primary', lineHeight: 1.6 }}>
+                    {summary.primaryFailure.explanation}
+                  </Typography>
+
+                  {/* ⭐ IMPROVEMENT 5: Evidence linkage with visual hierarchy */}
+                  {summary.primaryFailure.evidence && summary.primaryFailure.evidence.length > 0 && (
+                    <Box sx={{ 
+                      mb: 2, 
+                      p: 2, 
+                      bgcolor: 'rgba(255, 255, 255, 0.7)',
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'divider'
+                    }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        📋 Evidence
                       </Typography>
-                      <Box component="ul" sx={{ mt: 0, mb: 0, pl: 2.5 }}>
-                        {f.hints.map((hint, hintIdx) => (
+                      <List dense sx={{ pl: 2 }}>
+                        {summary.primaryFailure.evidence.map((ev, idx) => (
+                          <ListItem key={idx} sx={{ pl: 0, py: 0.5 }}>
+                            <Typography variant="body2" component="div">
+                              <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                                {ev.kind}:
+                              </Box>{' '}
+                              <Box component="span" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                                {ev.name}
+                              </Box>
+                              {ev.message && (
+                                <Box component="div" sx={{ 
+                                  ml: 2, 
+                                  mt: 0.5, 
+                                  color: 'text.secondary', 
+                                  fontSize: '0.85rem',
+                                  fontStyle: 'italic'
+                                }}>
+                                  {ev.message}
+                                </Box>
+                              )}
+                            </Typography>
+                          </ListItem>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+
+                  {/* Next Steps */}
+                  {summary.primaryFailure.nextSteps && summary.primaryFailure.nextSteps.length > 0 && (
+                    <Box sx={{ 
+                      p: 2, 
+                      bgcolor: 'info.50',
+                      borderRadius: 1,
+                      borderLeft: '4px solid',
+                      borderColor: 'info.main'
+                    }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                        💡 Next Steps
+                      </Typography>
+                      <Box component="ol" sx={{ mt: 0, mb: 0, pl: 2.5 }}>
+                        {summary.primaryFailure.nextSteps.map((step, idx) => (
                           <Typography 
-                            key={hintIdx} 
+                            key={idx} 
                             component="li" 
                             variant="body2"
-                            sx={{ fontStyle: 'italic', mb: 0.5 }}
+                            sx={{ mb: 0.75, lineHeight: 1.5 }}
                           >
-                            {hint}
+                            {step}
                           </Typography>
                         ))}
                       </Box>
                     </Box>
                   )}
+                </Box>
+              </Box>
+            </Paper>
+          )}
+
+          {/* All Findings Section - Show even when Overall = PASS if there are WARN findings */}
+          {(() => {
+            // ⭐ POLISH 1: Filter out primary failure to avoid duplication
+            const additionalFindings = summary.findings?.filter(
+              f => !summary.primaryFailure || f.code !== summary.primaryFailure.code
+            ) || [];
+            
+            // Only show section if there are findings OR if we want to show a message
+            if (summary.findings?.length === 0) return null;
+            
+            return (
+              <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+                <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {summary.primaryFailure ? 'Additional Findings' : 'Findings'}
+                  {getHealthFromSummary().overall === 'PASS' && getHealthFromSummary().hasWarnings && (
+                    <Chip 
+                      label="Advisory" 
+                      size="small" 
+                      color="warning" 
+                      variant="outlined"
+                      sx={{ fontSize: '0.7rem' }}
+                    />
+                  )}
+                </Typography>
+                
+                {additionalFindings.length === 0 && summary.primaryFailure ? (
+                  // ⭐ POLISH 1: Show subtle message when no additional findings
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary" 
+                    sx={{ fontStyle: 'italic', textAlign: 'center', py: 2 }}
+                  >
+                    No additional findings detected.
+                  </Typography>
+                ) : (
+                  additionalFindings.map((f, idx) => (
+                <Alert 
+                  key={idx} 
+                  severity={getSeverityColor(f.severity)}
+                  icon={getSeverityIcon(f.severity)}
+                  sx={{ mb: 1.5 }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
+                    <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                      {f.title || f.code}
+                    </Typography>
+                    <Chip 
+                      label={f.code} 
+                      size="small" 
+                      sx={{ 
+                        fontFamily: 'monospace', 
+                        height: '20px',
+                        fontSize: '0.7rem'
+                      }} 
+                    />
+                    {/* ⭐ IMPROVEMENT 3: Owner badge on each finding */}
+                    {f.owner && getOwnerBadge(f.owner)}
+                  </Box>
                   
-                  {/* Evidence refs with click-to-scroll */}
-                  {Array.isArray(f.evidenceRefs) && f.evidenceRefs.length > 0 && (
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    {f.explanation || f.message}
+                  </Typography>
+                  
+                  {/* ⭐ IMPROVEMENT 5: Evidence with visual hierarchy */}
+                  {f.evidence && f.evidence.length > 0 && (
+                    <Box sx={{ 
+                      mt: 1, 
+                      p: 1.5, 
+                      bgcolor: 'rgba(0, 0, 0, 0.03)', 
+                      borderRadius: 1,
+                      borderLeft: '3px solid',
+                      borderColor: getSeverityColor(f.severity) + '.main'
+                    }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                        📋 Evidence:
+                      </Typography>
+                      <List dense sx={{ pl: 1 }}>
+                        {f.evidence.map((ev, evIdx) => (
+                          <ListItem key={evIdx} sx={{ py: 0.25, pl: 0 }}>
+                            <Typography variant="body2" component="div" sx={{ fontSize: '0.875rem' }}>
+                              <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
+                                {ev.kind}:
+                              </Box>{' '}
+                              <Box component="span" sx={{ fontFamily: 'monospace' }}>
+                                {ev.name}
+                              </Box>
+                              {ev.message && (
+                                <Box component="div" sx={{ 
+                                  ml: 2, 
+                                  mt: 0.25, 
+                                  color: 'text.secondary', 
+                                  fontSize: '0.8rem',
+                                  fontStyle: 'italic'
+                                }}>
+                                  {ev.message}
+                                </Box>
+                              )}
+                            </Typography>
+                          </ListItem>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+
+                  {/* Legacy evidenceRefs support (for backward compatibility) */}
+                  {!f.evidence && Array.isArray(f.evidenceRefs) && f.evidenceRefs.length > 0 && (
                     <Box sx={{ mt: 1 }}>
                       <Typography variant="body2" sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
                         Evidence:{' '}
@@ -368,10 +653,72 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                       </Typography>
                     </Box>
                   )}
+                  
+                  {/* Next steps */}
+                  {f.nextSteps && f.nextSteps.length > 0 && (
+                    <Box 
+                      sx={{ 
+                        mt: 1.5, 
+                        p: 1.5, 
+                        bgcolor: 'rgba(33, 150, 243, 0.08)', 
+                        borderRadius: 1,
+                        borderLeft: '3px solid',
+                        borderColor: 'info.main'
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        💡 Next Steps:
+                      </Typography>
+                      <Box component="ol" sx={{ mt: 0, mb: 0, pl: 2.5 }}>
+                        {f.nextSteps.map((step, stepIdx) => (
+                          <Typography 
+                            key={stepIdx} 
+                            component="li" 
+                            variant="body2"
+                            sx={{ mb: 0.5, fontSize: '0.875rem' }}
+                          >
+                            {step}
+                          </Typography>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
+
+                  {/* Legacy hints support (for backward compatibility) */}
+                  {!f.nextSteps && Array.isArray(f.hints) && f.hints.length > 0 && (
+                    <Box 
+                      sx={{ 
+                        mt: 1, 
+                        p: 1, 
+                        bgcolor: 'rgba(33, 150, 243, 0.08)', 
+                        borderRadius: 1,
+                        borderLeft: '3px solid',
+                        borderColor: 'info.main'
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        💡 Common causes:
+                      </Typography>
+                      <Box component="ul" sx={{ mt: 0, mb: 0, pl: 2.5 }}>
+                        {f.hints.map((hint, hintIdx) => (
+                          <Typography 
+                            key={hintIdx} 
+                            component="li" 
+                            variant="body2"
+                            sx={{ fontStyle: 'italic', mb: 0.5 }}
+                          >
+                            {hint}
+                          </Typography>
+                        ))}
+                      </Box>
+                    </Box>
+                  )}
                 </Alert>
-              ))}
-            </Paper>
-          )}
+              ))
+            )}
+          </Paper>
+        );
+      })()}
 
           {/* Deployments Section */}
           {summary.objects?.deployments?.length > 0 && (
