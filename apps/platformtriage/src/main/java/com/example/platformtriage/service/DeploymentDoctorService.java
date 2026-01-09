@@ -76,6 +76,37 @@ public class DeploymentDoctorService {
         List<V1Pod> pods = listPods(namespace, effectiveSelector);
         Map<String, V1Deployment> deployments = listDeploymentsBySelector(namespace, effectiveSelector);
 
+        // ==================== FIX 3: UNKNOWN SHORT-CIRCUIT ====================
+        // If no pods AND no deployments, return UNKNOWN immediately
+        if (pods.isEmpty() && deployments.isEmpty()) {
+            Finding noMatchingObjectsFinding = new Finding(
+                    FailureCode.NO_MATCHING_OBJECTS,
+                    "No matching objects",
+                    "No pods or deployments matched the provided selector/release in this namespace.",
+                    List.of(new Evidence("Namespace", namespace)),
+                    List.of(
+                            "Verify the selector or release parameter is correct.",
+                            "Check that resources exist in the namespace: kubectl get pods,deployments -n " + namespace,
+                            "Confirm you're connected to the correct cluster and namespace."
+                    )
+            );
+
+            return new DeploymentSummaryResponse(
+                    OffsetDateTime.now(),
+                    new Target(namespace, effectiveSelector, release),
+                    new Health(OverallStatus.UNKNOWN, "0/0", Map.of(
+                            "running", 0,
+                            "pending", 0,
+                            "crashLoop", 0,
+                            "imagePullBackOff", 0,
+                            "notReady", 0
+                    )),
+                    List.of(noMatchingObjectsFinding),
+                    noMatchingObjectsFinding,  // primaryFailure is set for UNKNOWN
+                    new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
+            );
+        }
+
         // Pre-compute names used for event filtering
         Set<String> podNames = pods.stream()
                 .map(p -> p.getMetadata() != null ? p.getMetadata().getName() : null)
@@ -207,23 +238,11 @@ public class DeploymentDoctorService {
         // Legacy findings (for backward compatibility)
         findings.addAll(findingsFromDeployments(deployments.values()));
 
-        if (pods.isEmpty() && deployments.isEmpty()) {
-            findings.add(new Finding(
-                    FailureCode.NO_MATCHING_OBJECTS,
-                    "No matching objects",
-                    "No pods or deployments matched the provided selector/release in this namespace.",
-                    List.of(new Evidence("Namespace", namespace)),
-                    List.of(
-                            "Verify the selector or release parameter is correct.",
-                            "Check that resources exist in the namespace: kubectl get pods,deployments -n " + namespace,
-                            "Confirm you're connected to the correct cluster and namespace."
-                    )
-            ));
-        }
+        // NOTE: NO_MATCHING_OBJECTS check moved to top (short-circuit)
 
         findings = normalizeFindings(findings);
-        Finding primaryFailure = selectPrimaryFailure(findings);
         OverallStatus overall = computeOverall(findings);
+        Finding primaryFailure = selectPrimaryFailure(findings, overall);
         String deploymentsReady = computeDeploymentsReadyString(deployments.values());
 
         return new DeploymentSummaryResponse(
@@ -1048,13 +1067,32 @@ public class DeploymentDoctorService {
     }
 
     /**
-     * Select the primary failure using priority ordering. Returns the
-     * highest-priority finding (lowest priority number). Priority order (from
-     * spec): 1. EXTERNAL_SECRET_RESOLUTION_FAILED 2. BAD_CONFIG 3.
-     * IMAGE_PULL_FAILED 4. INSUFFICIENT_RESOURCES 5. RBAC_DENIED 6. CRASH_LOOP
-     * 7. READINESS_CHECK_FAILED 8. SERVICE_SELECTOR_MISMATCH
+     * ==================== FIX 1: PRIMARY FAILURE SEMANTICS ====================
+     * Select the primary failure using priority ordering.
+     * 
+     * CONTRACT RULE:
+     * - primaryFailure is set ONLY when overall == FAIL or overall == UNKNOWN
+     * - Otherwise, primaryFailure = null
+     * - Warnings must NEVER populate primaryFailure
+     * 
+     * This prevents scary red UIs when everything is actually working fine.
+     * 
+     * Priority order (from spec):
+     * 1. EXTERNAL_SECRET_RESOLUTION_FAILED
+     * 2. BAD_CONFIG
+     * 3. IMAGE_PULL_FAILED
+     * 4. INSUFFICIENT_RESOURCES
+     * 5. RBAC_DENIED
+     * 6. CRASH_LOOP
+     * 7. READINESS_CHECK_FAILED
+     * 8. SERVICE_SELECTOR_MISMATCH
      */
-    private Finding selectPrimaryFailure(List<Finding> findings) {
+    private Finding selectPrimaryFailure(List<Finding> findings, OverallStatus overall) {
+        // Contract enforcement: primaryFailure only for FAIL or UNKNOWN
+        if (overall != OverallStatus.FAIL && overall != OverallStatus.UNKNOWN) {
+            return null;
+        }
+
         if (findings.isEmpty()) {
             return null;
         }
@@ -1081,11 +1119,13 @@ public class DeploymentDoctorService {
             return OverallStatus.FAIL;
         }
 
-        // IMPORTANT: WARN findings do NOT fail overall
+        // IMPORTANT: WARN findings do NOT fail overall (overall != FAIL)
         // They are risk signals / advisory findings
-        // Overall stays PASS (or becomes WARN for backward compat with legacy MED)
-        boolean hasLegacyMed = findings.stream().anyMatch(f -> f.severity() == Severity.MED);
-        if (hasLegacyMed) {
+        // But they DO set overall = WARN (not PASS)
+        // Check both WARN and legacy MED severity
+        boolean hasWarning = findings.stream().anyMatch(f
+                -> f.severity() == Severity.WARN || f.severity() == Severity.MED);
+        if (hasWarning) {
             return OverallStatus.WARN;
         }
 
