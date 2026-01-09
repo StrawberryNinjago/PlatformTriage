@@ -70,10 +70,38 @@ public class DeploymentDoctorService {
             String release,
             int limitEvents
     ) {
+        // ==================== QUERY FAILURE HANDLING ====================
+        // Wrap the entire query phase to detect input/platform query failures
+        // This is a first-class failure category (tooling/query failures)
+        try {
+            return executeQuery(namespace, selector, release, limitEvents);
+        } catch (IllegalArgumentException e) {
+            // Selector/release validation failed or namespace invalid
+            return buildQueryInvalidResponse(namespace, selector, release, e.getMessage());
+        } catch (ApiException e) {
+            // Kubernetes API returned error (400/422 = bad request, invalid selector syntax)
+            if (e.getCode() == 400 || e.getCode() == 422) {
+                return buildQueryInvalidResponse(namespace, selector, release, 
+                    "Kubernetes API rejected query: " + e.getMessage());
+            }
+            // Other API errors (403, 404, 500) - re-throw for generic error handling
+            throw new IllegalStateException("Failed to query Kubernetes: " + e.getResponseBody(), e);
+        }
+    }
+
+    /**
+     * Execute the actual query logic (extracted from getSummary for error handling).
+     */
+    private DeploymentSummaryResponse executeQuery(
+            String namespace,
+            String selector,
+            String release,
+            int limitEvents
+    ) throws ApiException {
         String effectiveSelector = buildEffectiveSelector(selector, release);
 
         // Core objects
-        List<V1Pod> pods = listPods(namespace, effectiveSelector);
+        List<V1Pod> pods = listPodsOrThrow(namespace, effectiveSelector);
         Map<String, V1Deployment> deployments = listDeploymentsBySelector(namespace, effectiveSelector);
 
         // ==================== FIX 3: UNKNOWN SHORT-CIRCUIT ====================
@@ -103,6 +131,7 @@ public class DeploymentDoctorService {
                     )),
                     List.of(noMatchingObjectsFinding),
                     noMatchingObjectsFinding,  // primaryFailure is set for UNKNOWN
+                    null,  // topWarning: N/A when no objects found
                     new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
             );
         }
@@ -243,6 +272,7 @@ public class DeploymentDoctorService {
         findings = normalizeFindings(findings);
         OverallStatus overall = computeOverall(findings);
         Finding primaryFailure = selectPrimaryFailure(findings, overall);
+        Finding topWarning = selectTopWarning(findings);
         String deploymentsReady = computeDeploymentsReadyString(deployments.values());
 
         return new DeploymentSummaryResponse(
@@ -251,8 +281,103 @@ public class DeploymentDoctorService {
                 new Health(overall, deploymentsReady, breakdown),
                 findings,
                 primaryFailure, // The highest-priority finding for primary decision
+                topWarning,     // The highest-priority warning-level finding
                 new Objects(workloadInfos, podInfos, relatedEvents, serviceInfos, endpointsInfos)
         );
+    }
+
+    // -------------------- query failure short-circuit --------------------
+    /**
+     * Build a FAIL response when the query itself is invalid.
+     * This is a first-class failure category: tooling/query failures.
+     * 
+     * CONTRACT:
+     * - overall = FAIL (not UNKNOWN, because the tool itself failed)
+     * - primaryFailure = QUERY_INVALID
+     * - findings = single QUERY_INVALID finding
+     * - objects = empty (cannot partially render)
+     * 
+     * This prevents confusion and maintains trust in the tool.
+     */
+    private DeploymentSummaryResponse buildQueryInvalidResponse(
+            String namespace,
+            String selector,
+            String release,
+            String errorMessage
+    ) {
+        // Build evidence from the invalid inputs
+        List<Evidence> evidence = new ArrayList<>();
+        evidence.add(new Evidence("Namespace", namespace));
+        if (StringUtils.hasText(selector)) {
+            evidence.add(new Evidence("Selector", selector));
+        }
+        if (StringUtils.hasText(release)) {
+            evidence.add(new Evidence("Release", release));
+        }
+        evidence.add(new Evidence("Error", errorMessage));
+
+        // Determine next steps based on error type
+        List<String> nextSteps = buildQueryInvalidNextSteps(errorMessage, selector, release);
+
+        Finding queryInvalidFinding = new Finding(
+                FailureCode.QUERY_INVALID,
+                "Invalid query parameters",
+                "The triage query could not be executed due to invalid input parameters or Kubernetes API rejection. " +
+                "This indicates a problem with the query itself, not the workload.",
+                evidence,
+                nextSteps
+        );
+
+        return new DeploymentSummaryResponse(
+                OffsetDateTime.now(),
+                new Target(namespace, selector, release),
+                new Health(OverallStatus.FAIL, "0/0", Map.of(
+                        "running", 0,
+                        "pending", 0,
+                        "crashLoop", 0,
+                        "imagePullBackOff", 0,
+                        "notReady", 0
+                )),
+                List.of(queryInvalidFinding),
+                queryInvalidFinding,  // primaryFailure is set for FAIL
+                null,  // topWarning: N/A when query fails
+                new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
+        );
+    }
+
+    /**
+     * Build actionable next steps based on the query error.
+     */
+    private List<String> buildQueryInvalidNextSteps(String errorMessage, String selector, String release) {
+        String msg = errorMessage != null ? errorMessage.toLowerCase() : "";
+        
+        List<String> steps = new ArrayList<>();
+        
+        // Selector-specific guidance
+        if (msg.contains("selector") || msg.contains("label") || StringUtils.hasText(selector)) {
+            steps.add("Verify label selector format follows Kubernetes syntax: key=value or key in (value1,value2)");
+            steps.add("Avoid trailing '=' or malformed expressions like 'app=' or '=value'");
+            steps.add("Test selector with kubectl: kubectl get pods -l \"" + 
+                (StringUtils.hasText(selector) ? selector : "<selector>") + "\" -n " + 
+                (StringUtils.hasText(msg) ? msg.substring(0, Math.min(20, msg.length())) : "namespace"));
+            steps.add("Common valid examples: app=my-app, tier=frontend, env!=prod");
+        } else if (msg.contains("namespace")) {
+            steps.add("Verify the namespace exists: kubectl get namespace");
+            steps.add("Check for typos in the namespace parameter");
+            steps.add("Confirm you have access to the namespace (RBAC permissions)");
+        } else if (StringUtils.hasText(selector) == false && StringUtils.hasText(release) == false) {
+            steps.add("Provide either 'selector' or 'release' parameter");
+            steps.add("Example: ?namespace=cart&selector=app=cart-app");
+            steps.add("Example: ?namespace=cart&release=cart-v1");
+        } else {
+            steps.add("Check the query parameters are valid Kubernetes identifiers");
+            steps.add("Verify namespace, selector, or release parameters are correctly formatted");
+            steps.add("Test query parameters with kubectl commands first");
+        }
+        
+        steps.add("Review error details in evidence section above");
+        
+        return steps;
     }
 
     // -------------------- selectors / list API --------------------
@@ -266,16 +391,15 @@ public class DeploymentDoctorService {
         throw new IllegalArgumentException("Either 'selector' or 'release' must be provided.");
     }
 
-    private List<V1Pod> listPods(String namespace, String selector) {
-        try {
-            V1PodList list = coreV1.listNamespacedPod(namespace).labelSelector(selector).execute();
-            return list.getItems() == null ? List.of() : list.getItems();
-        } catch (ApiException e) {
-            throw new IllegalStateException("Failed to list pods: " + e.getResponseBody(), e);
-        }
+    /**
+     * List pods, allowing ApiException to propagate for query failure handling.
+     */
+    private List<V1Pod> listPodsOrThrow(String namespace, String selector) throws ApiException {
+        V1PodList list = coreV1.listNamespacedPod(namespace).labelSelector(selector).execute();
+        return list.getItems() == null ? List.of() : list.getItems();
     }
 
-    private Map<String, V1Deployment> listDeploymentsBySelector(String namespace, String selector) {
+    private Map<String, V1Deployment> listDeploymentsBySelector(String namespace, String selector) throws ApiException {
         try {
             V1DeploymentList list = appsV1.listNamespacedDeployment(namespace).labelSelector(selector).execute();
             if (list.getItems() == null) {
@@ -286,7 +410,12 @@ public class DeploymentDoctorService {
                     d -> d
             ));
         } catch (ApiException e) {
-            // RBAC may block deployment list; proceed with pods-only view
+            // Query failures (400, 422) should propagate for QUERY_INVALID handling
+            if (e.getCode() == 400 || e.getCode() == 422) {
+                throw e;
+            }
+            // RBAC (403) or not found (404): proceed with pods-only view
+            // This is not a query failure, just limited permissions
             return Map.of();
         }
     }
@@ -1067,7 +1196,7 @@ public class DeploymentDoctorService {
     }
 
     /**
-     * ==================== FIX 1: PRIMARY FAILURE SEMANTICS ====================
+     * ==================== PRIMARY FAILURE SELECTION ====================
      * Select the primary failure using priority ordering.
      * 
      * CONTRACT RULE:
@@ -1097,7 +1226,33 @@ public class DeploymentDoctorService {
             return null;
         }
 
+        // Select highest priority ERROR-severity finding
+        // (WARN findings have lower priority and won't be selected here)
         return findings.stream()
+                .filter(f -> f.severity() == Severity.ERROR || f.severity() == Severity.HIGH)
+                .min(Comparator.comparingInt(Finding::getPriority))
+                .orElse(null);
+    }
+
+    /**
+     * ==================== TOP WARNING SELECTION ====================
+     * Select the top warning using priority ordering.
+     * 
+     * CONTRACT RULE:
+     * - topWarning is the highest priority finding with severity == WARN or MED
+     * - topWarning can be present even when overall == PASS (if warnings exist)
+     * - topWarning is independent of primaryFailure
+     * 
+     * This gives UI a stable "top warning" to display without re-implementing prioritization.
+     */
+    private Finding selectTopWarning(List<Finding> findings) {
+        if (findings.isEmpty()) {
+            return null;
+        }
+
+        // Select highest priority WARN-severity finding
+        return findings.stream()
+                .filter(f -> f.severity() == Severity.WARN || f.severity() == Severity.MED)
                 .min(Comparator.comparingInt(Finding::getPriority))
                 .orElse(null);
     }

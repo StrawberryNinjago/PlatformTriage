@@ -1,13 +1,20 @@
 package com.example.platformtriage.model.enums;
 
 /**
- * Platform Failure Taxonomy - MVP 8 codes
+ * Platform Failure Taxonomy - MVP 8 codes + Tooling/Query failures
  * Mutually exclusive primary failure codes that are:
  * - Owner-routable (clear escalation path)
  * - Evidence-driven (every finding must point to pods/events/deployments)
  * - Composable (multiple findings per run)
  */
 public enum FailureCode {
+    /**
+     * Query failed: Invalid input, bad selector syntax, namespace issues, or API 400/422 errors.
+     * Owner: Platform (tooling) | Default severity: ERROR
+     * Priority: 0 (highest - cannot assess system if query fails)
+     */
+    QUERY_INVALID(Owner.PLATFORM, Severity.ERROR),
+    
     /**
      * Pod cannot start due to missing/invalid K8s config (Secret/ConfigMap/env/volume refs).
      * Owner: App team | Default severity: ERROR
@@ -92,6 +99,9 @@ public enum FailureCode {
      */
     public int getPriority() {
         return switch (this) {
+            // Query/tooling failures - HIGHEST priority (cannot assess if query fails)
+            case QUERY_INVALID -> 0;
+            // Application/Platform failures - high priority
             case EXTERNAL_SECRET_RESOLUTION_FAILED -> 1;
             case BAD_CONFIG -> 2;
             case IMAGE_PULL_FAILED -> 3;
@@ -105,6 +115,7 @@ public enum FailureCode {
             // Risk signals (WARN) - low priority, informational
             case POD_RESTARTS_DETECTED -> 50;
             case POD_SANDBOX_RECYCLE -> 51;
+            // Special cases
             case NO_MATCHING_OBJECTS -> 99;
         };
     }

@@ -16,10 +16,11 @@ import com.example.platformtriage.model.dto.Target;
  * - primaryFailure = null when health.overall == WARN or health.overall == PASS
  * - This prevents warnings from being treated as critical failures in the UI
  * 
- * TOP WARNING (UI DERIVATION):
- * - When health.overall == WARN, UI should derive "top warning" as:
- *   the first finding with severity == WARN in the findings list
- * - This keeps backend logic simple while giving UI flexibility
+ * TOP WARNING CONTRACT:
+ * - topWarning is set when there are WARN-severity findings (typically when overall == WARN)
+ * - topWarning = highest priority finding with severity == WARN
+ * - topWarning can be set even when overall == PASS (warnings present but no errors)
+ * - This gives UI a deterministic "top warning" without re-implementing prioritization
  */
 public record DeploymentSummaryResponse(
     OffsetDateTime timestamp,
@@ -27,5 +28,6 @@ public record DeploymentSummaryResponse(
     Health health,
     List<Finding> findings,
     Finding primaryFailure,  // Set ONLY when overall == FAIL or UNKNOWN; null otherwise
+    Finding topWarning,      // Highest priority WARN-severity finding; null if no warnings
     Objects objects
 ) {}
