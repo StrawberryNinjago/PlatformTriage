@@ -21,6 +21,11 @@ import com.example.platformtriage.model.dto.Target;
  * - topWarning = highest priority finding with severity == WARN
  * - topWarning can be set even when overall == PASS (warnings present but no errors)
  * - This gives UI a deterministic "top warning" without re-implementing prioritization
+ * 
+ * DEBUG METADATA:
+ * - primaryFailureDebug explains WHY the primary failure was chosen
+ * - Includes score breakdown and competing findings
+ * - Helps users/developers understand the ranking algorithm
  */
 public record DeploymentSummaryResponse(
     OffsetDateTime timestamp,
@@ -29,5 +34,6 @@ public record DeploymentSummaryResponse(
     List<Finding> findings,
     Finding primaryFailure,  // Set ONLY when overall == FAIL or UNKNOWN; null otherwise
     Finding topWarning,      // Highest priority WARN-severity finding; null if no warnings
+    PrimaryFailureDebug primaryFailureDebug,  // Debug metadata (why this was chosen)
     Objects objects
 ) {}

@@ -58,10 +58,12 @@ public class DeploymentDoctorService {
 
     private final CoreV1Api coreV1;
     private final AppsV1Api appsV1;
+    private final RestartBaselineStore restartBaselineStore;
 
-    public DeploymentDoctorService(ApiClient client) {
+    public DeploymentDoctorService(ApiClient client, RestartBaselineStore restartBaselineStore) {
         this.coreV1 = new CoreV1Api(client);
         this.appsV1 = new AppsV1Api(client);
+        this.restartBaselineStore = restartBaselineStore;
     }
 
     public DeploymentSummaryResponse getSummary(
@@ -81,8 +83,8 @@ public class DeploymentDoctorService {
         } catch (ApiException e) {
             // Kubernetes API returned error (400/422 = bad request, invalid selector syntax)
             if (e.getCode() == 400 || e.getCode() == 422) {
-                return buildQueryInvalidResponse(namespace, selector, release, 
-                    "Kubernetes API rejected query: " + e.getMessage());
+                return buildQueryInvalidResponse(namespace, selector, release,
+                        "Kubernetes API rejected query: " + e.getMessage());
             }
             // Other API errors (403, 404, 500) - re-throw for generic error handling
             throw new IllegalStateException("Failed to query Kubernetes: " + e.getResponseBody(), e);
@@ -90,7 +92,8 @@ public class DeploymentDoctorService {
     }
 
     /**
-     * Execute the actual query logic (extracted from getSummary for error handling).
+     * Execute the actual query logic (extracted from getSummary for error
+     * handling).
      */
     private DeploymentSummaryResponse executeQuery(
             String namespace,
@@ -130,8 +133,9 @@ public class DeploymentDoctorService {
                             "notReady", 0
                     )),
                     List.of(noMatchingObjectsFinding),
-                    noMatchingObjectsFinding,  // primaryFailure is set for UNKNOWN
-                    null,  // topWarning: N/A when no objects found
+                    noMatchingObjectsFinding, // primaryFailure is set for UNKNOWN
+                    null, // topWarning: N/A when no objects found
+                    null, // primaryFailureDebug: N/A for short-circuit (not ranked)
                     new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
             );
         }
@@ -261,14 +265,23 @@ public class DeploymentDoctorService {
         findings.addAll(detectRbacDenied(relatedEvents));
 
         // Run risk signal detection - WARN severity (advisory)
-        findings.addAll(detectPodRestarts(podInfos));
+        // Compute restart deltas (only warn on NEW restarts since last load)
+        java.time.Instant now = java.time.Instant.now();
+        restartBaselineStore.evictExpired(now);
+        RestartBaselineStore.ScopeKey scopeKey
+                = new RestartBaselineStore.ScopeKey(namespace, effectiveSelector, release);
+        Map<String, Integer> restartDeltas = podInfos.stream()
+                .collect(Collectors.toMap(
+                        PodInfo::name,
+                        p -> restartBaselineStore.deltaAndUpdate(scopeKey, p.name(), p.restarts(), now)
+                ));
+        findings.addAll(detectPodRestarts(podInfos, restartDeltas));
         findings.addAll(detectPodSandboxRecycle(relatedEvents));
 
         // Legacy findings (for backward compatibility)
         findings.addAll(findingsFromDeployments(deployments.values()));
 
         // NOTE: NO_MATCHING_OBJECTS check moved to top (short-circuit)
-
         findings = normalizeFindings(findings);
         OverallStatus overall = computeOverall(findings);
         Finding primaryFailure = selectPrimaryFailure(findings, overall);
@@ -281,22 +294,21 @@ public class DeploymentDoctorService {
                 new Health(overall, deploymentsReady, breakdown),
                 findings,
                 primaryFailure, // The highest-priority finding for primary decision
-                topWarning,     // The highest-priority warning-level finding
+                topWarning, // The highest-priority warning-level finding
+                null, // TODO: Add primaryFailureDebug from ranker
                 new Objects(workloadInfos, podInfos, relatedEvents, serviceInfos, endpointsInfos)
         );
     }
 
     // -------------------- query failure short-circuit --------------------
     /**
-     * Build a FAIL response when the query itself is invalid.
-     * This is a first-class failure category: tooling/query failures.
-     * 
-     * CONTRACT:
-     * - overall = FAIL (not UNKNOWN, because the tool itself failed)
-     * - primaryFailure = QUERY_INVALID
-     * - findings = single QUERY_INVALID finding
-     * - objects = empty (cannot partially render)
-     * 
+     * Build a FAIL response when the query itself is invalid. This is a
+     * first-class failure category: tooling/query failures.
+     *
+     * CONTRACT: - overall = FAIL (not UNKNOWN, because the tool itself failed)
+     * - primaryFailure = QUERY_INVALID - findings = single QUERY_INVALID
+     * finding - objects = empty (cannot partially render)
+     *
      * This prevents confusion and maintains trust in the tool.
      */
     private DeploymentSummaryResponse buildQueryInvalidResponse(
@@ -322,8 +334,8 @@ public class DeploymentDoctorService {
         Finding queryInvalidFinding = new Finding(
                 FailureCode.QUERY_INVALID,
                 "Invalid query parameters",
-                "The triage query could not be executed due to invalid input parameters or Kubernetes API rejection. " +
-                "This indicates a problem with the query itself, not the workload.",
+                "The triage query could not be executed due to invalid input parameters or Kubernetes API rejection. "
+                + "This indicates a problem with the query itself, not the workload.",
                 evidence,
                 nextSteps
         );
@@ -339,8 +351,9 @@ public class DeploymentDoctorService {
                         "notReady", 0
                 )),
                 List.of(queryInvalidFinding),
-                queryInvalidFinding,  // primaryFailure is set for FAIL
-                null,  // topWarning: N/A when query fails
+                queryInvalidFinding, // primaryFailure is set for FAIL
+                null, // topWarning: N/A when query fails
+                null, // primaryFailureDebug: N/A for short-circuit (not ranked)
                 new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
         );
     }
@@ -350,16 +363,16 @@ public class DeploymentDoctorService {
      */
     private List<String> buildQueryInvalidNextSteps(String errorMessage, String selector, String release) {
         String msg = errorMessage != null ? errorMessage.toLowerCase() : "";
-        
+
         List<String> steps = new ArrayList<>();
-        
+
         // Selector-specific guidance
         if (msg.contains("selector") || msg.contains("label") || StringUtils.hasText(selector)) {
             steps.add("Verify label selector format follows Kubernetes syntax: key=value or key in (value1,value2)");
             steps.add("Avoid trailing '=' or malformed expressions like 'app=' or '=value'");
-            steps.add("Test selector with kubectl: kubectl get pods -l \"" + 
-                (StringUtils.hasText(selector) ? selector : "<selector>") + "\" -n " + 
-                (StringUtils.hasText(msg) ? msg.substring(0, Math.min(20, msg.length())) : "namespace"));
+            steps.add("Test selector with kubectl: kubectl get pods -l \""
+                    + (StringUtils.hasText(selector) ? selector : "<selector>") + "\" -n "
+                    + (StringUtils.hasText(msg) ? msg.substring(0, Math.min(20, msg.length())) : "namespace"));
             steps.add("Common valid examples: app=my-app, tier=frontend, env!=prod");
         } else if (msg.contains("namespace")) {
             steps.add("Verify the namespace exists: kubectl get namespace");
@@ -374,9 +387,9 @@ public class DeploymentDoctorService {
             steps.add("Verify namespace, selector, or release parameters are correctly formatted");
             steps.add("Test query parameters with kubectl commands first");
         }
-        
+
         steps.add("Review error details in evidence section above");
-        
+
         return steps;
     }
 
@@ -1041,48 +1054,64 @@ public class DeploymentDoctorService {
 
     // -------------------- Risk Signal Detection (WARN severity) --------------------
     /**
-     * RISK SIGNAL: POD_RESTARTS_DETECTED Trigger: Pod is Running + Ready but
-     * has restarts > 0 This indicates transient crashes, config reloads, or
-     * unstable startup
+     * RISK SIGNAL: POD_RESTARTS_DETECTED
+     *
+     * Detects restarts SINCE LAST LOAD (not cumulative since pod creation).
+     * Uses RestartBaselineStore to track delta.
+     *
+     * Why delta matters: - Kubernetes restart count is cumulative (never
+     * resets) - Without delta tracking, pods warn forever after first restart -
+     * With delta tracking, we only warn on NEW restarts
+     *
+     * @param pods List of pods
+     * @param restartDeltas Map of podName -> delta restarts since last load
      */
-    private List<Finding> detectPodRestarts(List<PodInfo> pods) {
+    private List<Finding> detectPodRestarts(List<PodInfo> pods, Map<String, Integer> restartDeltas) {
         List<Evidence> evidence = new ArrayList<>();
-        int totalRestarts = 0;
+        int totalDelta = 0;
 
-        // Pattern: Pod is Running AND Ready, but has restarted
+        // Pattern: Pod is Running AND Ready AND restarted since last load
         for (PodInfo p : pods) {
-            if ("Running".equalsIgnoreCase(p.phase()) && p.ready() && p.restarts() > 0) {
-                totalRestarts += p.restarts();
-
-                // Build evidence message with restart count
-                String evidenceMsg = p.restarts() + " restart" + (p.restarts() > 1 ? "s" : "") + " (currently Ready)";
-
-                // Try to add termination reason if available
-                if (p.reason() != null && !p.reason().isEmpty()) {
-                    evidenceMsg += " - Last reason: " + p.reason();
-                }
-
-                evidence.add(new Evidence("Pod", p.name(), evidenceMsg));
+            if (!"Running".equalsIgnoreCase(p.phase()) || !p.ready()) {
+                continue;
             }
+
+            int delta = restartDeltas.getOrDefault(p.name(), 0);
+            if (delta <= 0) {
+                continue; // KEY CHANGE: only warn if restarts increased since last LOAD
+            }
+
+            totalDelta += delta;
+
+            // Build evidence message showing delta + total
+            String evidenceMsg = "+" + delta + " since last LOAD (total=" + p.restarts() + ")";
+
+            if (StringUtils.hasText(p.reason())) {
+                evidenceMsg += " - Last reason: " + p.reason();
+            }
+
+            evidence.add(new Evidence("Pod", p.name(), evidenceMsg));
         }
 
         if (evidence.isEmpty()) {
             return List.of();
         }
 
-        // Fix: Use totalRestarts, not evidence.size()
+        // Build explanation
         String explanation;
         if (evidence.size() == 1) {
-            explanation = "Pod has restarted " + totalRestarts + " time" + (totalRestarts > 1 ? "s" : "")
-                    + " but is currently running. This may indicate transient crashes, config reloads, or unstable startup behavior.";
+            explanation = "Pod restarted " + totalDelta + " time" + (totalDelta > 1 ? "s" : "")
+                    + " since last LOAD but is currently running.";
         } else {
-            explanation = evidence.size() + " pods have restarted " + totalRestarts + " total times "
-                    + "but are currently running. This may indicate transient crashes, config reloads, or unstable startup behavior.";
+            explanation = evidence.size() + " pods restarted " + totalDelta + " total times "
+                    + "since last LOAD but are currently running.";
         }
+
+        explanation += " This may indicate transient crashes, config reloads, or unstable startup behavior.";
 
         return List.of(new Finding(
                 FailureCode.POD_RESTARTS_DETECTED,
-                "Pod restarts detected",
+                "Pod restarts detected (since last LOAD)",
                 explanation,
                 evidence,
                 List.of(
@@ -1198,23 +1227,16 @@ public class DeploymentDoctorService {
     /**
      * ==================== PRIMARY FAILURE SELECTION ====================
      * Select the primary failure using priority ordering.
-     * 
-     * CONTRACT RULE:
-     * - primaryFailure is set ONLY when overall == FAIL or overall == UNKNOWN
-     * - Otherwise, primaryFailure = null
-     * - Warnings must NEVER populate primaryFailure
-     * 
+     *
+     * CONTRACT RULE: - primaryFailure is set ONLY when overall == FAIL or
+     * overall == UNKNOWN - Otherwise, primaryFailure = null - Warnings must
+     * NEVER populate primaryFailure
+     *
      * This prevents scary red UIs when everything is actually working fine.
-     * 
-     * Priority order (from spec):
-     * 1. EXTERNAL_SECRET_RESOLUTION_FAILED
-     * 2. BAD_CONFIG
-     * 3. IMAGE_PULL_FAILED
-     * 4. INSUFFICIENT_RESOURCES
-     * 5. RBAC_DENIED
-     * 6. CRASH_LOOP
-     * 7. READINESS_CHECK_FAILED
-     * 8. SERVICE_SELECTOR_MISMATCH
+     *
+     * Priority order (from spec): 1. EXTERNAL_SECRET_RESOLUTION_FAILED 2.
+     * BAD_CONFIG 3. IMAGE_PULL_FAILED 4. INSUFFICIENT_RESOURCES 5. RBAC_DENIED
+     * 6. CRASH_LOOP 7. READINESS_CHECK_FAILED 8. SERVICE_SELECTOR_MISMATCH
      */
     private Finding selectPrimaryFailure(List<Finding> findings, OverallStatus overall) {
         // Contract enforcement: primaryFailure only for FAIL or UNKNOWN
@@ -1235,15 +1257,15 @@ public class DeploymentDoctorService {
     }
 
     /**
-     * ==================== TOP WARNING SELECTION ====================
-     * Select the top warning using priority ordering.
-     * 
-     * CONTRACT RULE:
-     * - topWarning is the highest priority finding with severity == WARN or MED
-     * - topWarning can be present even when overall == PASS (if warnings exist)
-     * - topWarning is independent of primaryFailure
-     * 
-     * This gives UI a stable "top warning" to display without re-implementing prioritization.
+     * ==================== TOP WARNING SELECTION ==================== Select
+     * the top warning using priority ordering.
+     *
+     * CONTRACT RULE: - topWarning is the highest priority finding with severity
+     * == WARN or MED - topWarning can be present even when overall == PASS (if
+     * warnings exist) - topWarning is independent of primaryFailure
+     *
+     * This gives UI a stable "top warning" to display without re-implementing
+     * prioritization.
      */
     private Finding selectTopWarning(List<Finding> findings) {
         if (findings.isEmpty()) {
