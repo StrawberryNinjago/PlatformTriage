@@ -49,7 +49,7 @@ function App() {
         <AppBar position="static" elevation={2}>
           <Toolbar>
             <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-              PlatformTriage
+            Triage Platform
             </Typography>
             
             {/* Status Chips */}

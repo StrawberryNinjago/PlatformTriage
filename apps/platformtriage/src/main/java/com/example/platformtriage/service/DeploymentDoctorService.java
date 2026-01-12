@@ -1069,22 +1069,44 @@ public class DeploymentDoctorService {
     private List<Finding> detectPodRestarts(List<PodInfo> pods, Map<String, Integer> restartDeltas) {
         List<Evidence> evidence = new ArrayList<>();
         int totalDelta = 0;
+        int totalRestarts = 0; // Track cumulative restarts for first-load scenarios
 
-        // Pattern: Pod is Running AND Ready AND restarted since last load
+        // ⭐ THRESHOLD: Only warn on first load if restarts >= this value
+        // Rationale: 0-2 lifetime restarts = normal operations (deployments, rolling updates)
+        // 3+ restarts = instability signal worth investigating
+        // This balances demo clarity (Healthy App = PASS, Restart Warning = WARN) with production use
+        final int FIRST_LOAD_THRESHOLD = 3;
+
+        // Pattern: Pod is Running AND Ready AND has significant restarts
         for (PodInfo p : pods) {
             if (!"Running".equalsIgnoreCase(p.phase()) || !p.ready()) {
                 continue;
             }
 
             int delta = restartDeltas.getOrDefault(p.name(), 0);
-            if (delta <= 0) {
-                continue; // KEY CHANGE: only warn if restarts increased since last LOAD
+            int absoluteRestarts = p.restarts();
+
+            // ⭐ DEMO FIX: Warn if:
+            // 1. Delta > 0 (new restarts since last load - always warn)
+            // 2. First load AND restarts >= threshold (demo scenario detection)
+            // This balances demo visibility with production false-positive reduction
+            boolean shouldWarn = delta > 0 || (delta == 0 && absoluteRestarts >= FIRST_LOAD_THRESHOLD);
+
+            if (!shouldWarn) {
+                continue;
             }
 
             totalDelta += delta;
+            totalRestarts += absoluteRestarts;
 
             // Build evidence message showing delta + total
-            String evidenceMsg = "+" + delta + " since last LOAD (total=" + p.restarts() + ")";
+            String evidenceMsg;
+            if (delta > 0) {
+                evidenceMsg = "+" + delta + " since last LOAD (total=" + absoluteRestarts + ")";
+            } else {
+                // First load scenario: show cumulative restarts
+                evidenceMsg = "Total restarts: " + absoluteRestarts + " (first load - establishing baseline)";
+            }
 
             if (StringUtils.hasText(p.reason())) {
                 evidenceMsg += " - Last reason: " + p.reason();
@@ -1099,19 +1121,31 @@ public class DeploymentDoctorService {
 
         // Build explanation
         String explanation;
-        if (evidence.size() == 1) {
-            explanation = "Pod restarted " + totalDelta + " time" + (totalDelta > 1 ? "s" : "")
-                    + " since last LOAD but is currently running.";
+        if (totalDelta > 0) {
+            // Delta-based explanation (subsequent loads)
+            if (evidence.size() == 1) {
+                explanation = "Pod restarted " + totalDelta + " time" + (totalDelta > 1 ? "s" : "")
+                        + " since last LOAD but is currently running.";
+            } else {
+                explanation = evidence.size() + " pods restarted " + totalDelta + " total times "
+                        + "since last LOAD but are currently running.";
+            }
         } else {
-            explanation = evidence.size() + " pods restarted " + totalDelta + " total times "
-                    + "since last LOAD but are currently running.";
+            // Cumulative-based explanation (first load)
+            if (evidence.size() == 1) {
+                explanation = "Pod has " + totalRestarts + " restart" + (totalRestarts > 1 ? "s" : "")
+                        + " but is currently running.";
+            } else {
+                explanation = evidence.size() + " pods have " + totalRestarts + " total restarts "
+                        + "but are currently running.";
+            }
         }
 
         explanation += " This may indicate transient crashes, config reloads, or unstable startup behavior.";
 
         return List.of(new Finding(
                 FailureCode.POD_RESTARTS_DETECTED,
-                "Pod restarts detected (since last LOAD)",
+                "Pod restarts detected",
                 explanation,
                 evidence,
                 List.of(
@@ -1300,6 +1334,9 @@ public class DeploymentDoctorService {
         // They are risk signals / advisory findings
         // But they DO set overall = WARN (not PASS)
         // Check both WARN and legacy MED severity
+        // 
+        // ⭐ This catches POD_RESTARTS_DETECTED (Severity.WARN) and surfaces it properly
+        // Ensures "Restart Warning" demo shows WARN, not PASS
         boolean hasWarning = findings.stream().anyMatch(f
                 -> f.severity() == Severity.WARN || f.severity() == Severity.MED);
         if (hasWarning) {

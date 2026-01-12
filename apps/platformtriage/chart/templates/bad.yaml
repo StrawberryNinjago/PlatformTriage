@@ -16,8 +16,46 @@ spec:
       labels:
         app: bad-app
     spec:
+      volumes:
+      - name: restart-tracker
+        emptyDir: {}
       containers:
-      - image: nginx
-        name: nginx
+      - image: busybox
+        name: unstable-container
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            # Use emptyDir to track restarts across container restarts (persists within pod lifetime)
+            RESTART_FILE="/restart-state/count"
+            mkdir -p /restart-state
+            
+            # Initialize counter if not exists
+            if [ ! -f "$RESTART_FILE" ]; then
+              echo "0" > "$RESTART_FILE"
+            fi
+            
+            # Read current restart count
+            RESTART_COUNT=$(cat "$RESTART_FILE")
+            echo "=== Container Start #$RESTART_COUNT ==="
+            
+            # Crash for first 3 starts (creates 3 restarts), then stay stable
+            if [ "$RESTART_COUNT" -lt "3" ]; then
+              NEW_COUNT=$((RESTART_COUNT + 1))
+              echo "⚠️  Simulating crash #$NEW_COUNT (will restart)..."
+              echo "$NEW_COUNT" > "$RESTART_FILE"
+              sleep 3
+              echo "💥 Crashing now!"
+              exit 1
+            else
+              echo "✅ Stable! Running normally (restart history: $RESTART_COUNT)"
+              # Keep container alive indefinitely
+              while true; do
+                sleep 30
+                echo "Still running... (total restarts: $RESTART_COUNT)"
+              done
+            fi
+        volumeMounts:
+        - name: restart-tracker
+          mountPath: /restart-state
         resources: {}
 status: {}

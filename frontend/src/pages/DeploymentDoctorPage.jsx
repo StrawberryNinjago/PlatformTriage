@@ -17,7 +17,9 @@ import {
   ListItem,
   ListItemText,
   TextField,
-  Button
+  Button,
+  Tooltip,
+  ButtonGroup
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import WarningIcon from '@mui/icons-material/Warning';
@@ -26,7 +28,47 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InfoIcon from '@mui/icons-material/Info';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import CheckIcon from '@mui/icons-material/Check';
 import axios from 'axios';
+
+// ⭐ Demo Scenarios Configuration
+const WORKLOAD_SCENARIOS = [
+  {
+    id: "healthy",
+    label: "Healthy App",
+    description: "All pods running, no findings",
+    tooltip: "Baseline, no findings",
+    namespace: "cart",
+    selector: "app=cart-app"
+  },
+  {
+    id: "warn",
+    label: "Restart Warning",
+    description: "Pods running but restarted recently",
+    tooltip: "Early instability signals",
+    namespace: "cart",
+    selector: "app=bad-app"
+  },
+  {
+    id: "fail",
+    label: "Config Failure",
+    description: "Missing secret / Key Vault failure",
+    tooltip: "Clear root cause",
+    namespace: "cart",
+    selector: "app=kv-misconfig-app"
+  }
+];
+
+const GUARDRAIL_SCENARIOS = [
+  {
+    id: "validation",
+    label: "Query Validation",
+    description: "Demonstrates query validation and safe failure (not a workload issue)",
+    tooltip: "Input validation & trust boundaries",
+    namespace: "cart",
+    selector: "app="
+  }
+];
 
 function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   const [loading, setLoading] = useState(false);
@@ -35,9 +77,14 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   const [namespace, setNamespace] = useState('');
   const [selector, setSelector] = useState('');
   const [release, setRelease] = useState('');
+  const [activeScenario, setActiveScenario] = useState(null);
+  const [isCustomMode, setIsCustomMode] = useState(false);
 
-  const loadDeploymentSummary = async () => {
-    const effectiveNamespace = namespace || 'default';
+  const loadDeploymentSummary = async (overrideParams = {}) => {
+    // Use override params if provided, otherwise use state
+    const effectiveNamespace = overrideParams.namespace ?? (namespace || 'default');
+    const effectiveSelector = overrideParams.selector ?? selector;
+    const effectiveRelease = overrideParams.release ?? release;
     
     if (!effectiveNamespace) {
       addConsoleMessage('✗ Namespace is required', 'error');
@@ -46,7 +93,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     }
 
     // Validate selector format
-    if (selector && !selector.includes('=')) {
+    if (effectiveSelector && !effectiveSelector.includes('=')) {
       const errorMsg = 'Selector must be a valid label selector, e.g. app=cart-app';
       addConsoleMessage(`✗ ${errorMsg}`, 'error');
       setError(errorMsg);
@@ -60,8 +107,8 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       addConsoleMessage(`🔍 Loading deployment summary for namespace: ${effectiveNamespace}...`, 'info');
       
       const params = new URLSearchParams({ namespace: effectiveNamespace });
-      if (selector) params.append('selector', selector);
-      if (release) params.append('release', release);
+      if (effectiveSelector) params.append('selector', effectiveSelector);
+      if (effectiveRelease) params.append('release', effectiveRelease);
       
       const response = await axios.get(`/api/deployment/summary?${params.toString()}`);
       setSummary(response.data);
@@ -75,6 +122,42 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  // ⭐ Handle demo scenario selection
+  const handleScenarioSelect = (scenario) => {
+    // Clear previous results
+    setSummary(null);
+    setError(null);
+    
+    // Populate fields
+    setNamespace(scenario.namespace);
+    setSelector(scenario.selector);
+    setRelease(scenario.release || '');
+    
+    // Mark scenario as active
+    setActiveScenario(scenario.id);
+    setIsCustomMode(false);
+    
+    // Show feedback
+    addConsoleMessage(`📋 Demo scenario loaded: ${scenario.label}`, 'info');
+    
+    // Auto-trigger load immediately with scenario values (don't wait for state to update)
+    loadDeploymentSummary({
+      namespace: scenario.namespace,
+      selector: scenario.selector,
+      release: scenario.release || ''
+    });
+  };
+
+  // Handle manual field changes (exit scenario mode)
+  const handleManualFieldChange = (field, value) => {
+    setIsCustomMode(true);
+    setActiveScenario(null);
+    
+    if (field === 'namespace') setNamespace(value);
+    if (field === 'selector') setSelector(value);
+    if (field === 'release') setRelease(value);
   };
 
   // ⭐ IMPROVEMENT 1: Severity-driven icons (not "check = detected")
@@ -180,38 +263,204 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       <Typography variant="h6" sx={{ mb: 2 }}>
         Kubernetes Configuration
       </Typography>
+
+      {/* ⭐ Demo Scenario Buttons */}
+      <Box sx={{ mb: 3 }}>
+        {/* Workload Scenarios */}
+        <Typography 
+          variant="subtitle2" 
+          sx={{ 
+            mb: 1.5, 
+            fontWeight: 600,
+            color: 'text.secondary',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1
+          }}
+        >
+          Demo Scenarios
+          <Chip label="One-Click" size="small" color="primary" variant="outlined" sx={{ height: 18, fontSize: '0.7rem' }} />
+        </Typography>
+        
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 3 }}>
+          {WORKLOAD_SCENARIOS.map((scenario) => (
+            <Tooltip 
+              key={scenario.id}
+              title={
+                <Box>
+                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                    {scenario.description}
+                  </Typography>
+                  <Typography variant="caption" sx={{ fontSize: '0.7rem', fontStyle: 'italic', opacity: 0.9 }}>
+                    {scenario.tooltip}
+                  </Typography>
+                </Box>
+              }
+              arrow
+              placement="top"
+            >
+              <Button
+                variant={activeScenario === scenario.id ? "contained" : "outlined"}
+                size="medium"
+                onClick={() => handleScenarioSelect(scenario)}
+                disabled={loading}
+                startIcon={activeScenario === scenario.id ? <CheckIcon /> : null}
+                sx={{
+                  fontWeight: 600,
+                  textTransform: 'none',
+                  borderWidth: 2,
+                  '&:hover': {
+                    borderWidth: 2
+                  },
+                  ...(activeScenario === scenario.id && {
+                    boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.2)'
+                  })
+                }}
+              >
+                {scenario.label}
+              </Button>
+            </Tooltip>
+          ))}
+          
+          {/* Custom Mode Button */}
+          <Tooltip 
+            title="Edit fields manually to customize your query"
+            arrow
+            placement="top"
+          >
+            <Button
+              variant={isCustomMode ? "contained" : "outlined"}
+              size="medium"
+              onClick={() => {
+                setIsCustomMode(true);
+                setActiveScenario(null);
+              }}
+              disabled={loading}
+              color="secondary"
+              sx={{
+                fontWeight: 600,
+                textTransform: 'none',
+                borderWidth: 2,
+                '&:hover': {
+                  borderWidth: 2
+                }
+              }}
+            >
+              Custom
+            </Button>
+          </Tooltip>
+        </Box>
+
+        {/* Tool Guardrails Section */}
+        <Typography 
+          variant="subtitle2" 
+          sx={{ 
+            mb: 1.5, 
+            fontWeight: 600,
+            color: 'text.secondary'
+          }}
+        >
+          Tool Guardrails
+        </Typography>
+        
+        <Box>
+          {GUARDRAIL_SCENARIOS.map((scenario) => (
+            <Box key={scenario.id} sx={{ display: 'inline-block' }}>
+              <Tooltip 
+                title={
+                  <Box>
+                    <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                      {scenario.tooltip}
+                    </Typography>
+                  </Box>
+                }
+                arrow
+                placement="top"
+              >
+                <Button
+                  variant={activeScenario === scenario.id ? "contained" : "outlined"}
+                  size="medium"
+                  onClick={() => handleScenarioSelect(scenario)}
+                  disabled={loading}
+                  startIcon={activeScenario === scenario.id ? <CheckIcon /> : null}
+                  sx={{
+                    fontWeight: 600,
+                    textTransform: 'none',
+                    borderWidth: 2,
+                    '&:hover': {
+                      borderWidth: 2
+                    },
+                    ...(activeScenario === scenario.id && {
+                      boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.2)'
+                    })
+                  }}
+                >
+                  {scenario.label}
+                </Button>
+              </Tooltip>
+              <Typography 
+                variant="caption" 
+                sx={{ 
+                  display: 'block',
+                  mt: 0.75,
+                  color: 'text.secondary',
+                  fontSize: '0.75rem',
+                  fontStyle: 'italic',
+                  maxWidth: '300px'
+                }}
+              >
+                {scenario.description}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+        
+        {/* Helper Text */}
+        {activeScenario && (
+          <Alert severity="info" sx={{ mt: 2, py: 0.5 }}>
+            Demo scenario loaded: <strong>
+              {WORKLOAD_SCENARIOS.find(s => s.id === activeScenario)?.label || 
+               GUARDRAIL_SCENARIOS.find(s => s.id === activeScenario)?.label}
+            </strong>
+          </Alert>
+        )}
+      </Box>
+
       <Grid container spacing={2} alignItems="flex-end">
         <Grid item xs={12} md={4}>
           <TextField
             label="Namespace"
             placeholder="default"
             value={namespace}
-            onChange={(e) => setNamespace(e.target.value)}
+            onChange={(e) => handleManualFieldChange('namespace', e.target.value)}
             onFocus={(e) => e.target.select()}
             fullWidth
             required
             helperText="Kubernetes namespace to monitor"
+            disabled={!isCustomMode && activeScenario !== null}
           />
         </Grid>
         <Grid item xs={12} md={3}>
           <TextField
             label="Label Selector (e.g. app=cart-app)"
             value={selector}
-            onChange={(e) => setSelector(e.target.value)}
+            onChange={(e) => handleManualFieldChange('selector', e.target.value)}
             onFocus={(e) => e.target.select()}
             fullWidth
             helperText="Filter by label (optional)"
             error={selector && !selector.includes('=')}
+            disabled={!isCustomMode && activeScenario !== null}
           />
         </Grid>
         <Grid item xs={12} md={3}>
           <TextField
             label="Release (optional)"
             value={release}
-            onChange={(e) => setRelease(e.target.value)}
+            onChange={(e) => handleManualFieldChange('release', e.target.value)}
             onFocus={(e) => e.target.select()}
             fullWidth
             helperText="Helm release name"
+            disabled={!isCustomMode && activeScenario !== null}
           />
         </Grid>
         <Grid item xs={12} md={2}>
