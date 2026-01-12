@@ -14,10 +14,12 @@ import com.example.Triage.service.db.DbConnectionService;
 import com.example.Triage.service.db.DbFlywayService;
 import com.example.Triage.service.db.DbIdentityService;
 import com.example.Triage.service.db.DbSummaryService;
+import com.example.Triage.service.DbExportService;
 import com.example.Triage.util.DbConnectionUtils;
 import com.example.Triage.model.dto.FlywayHistoryRowDto;
 import com.example.Triage.model.dto.ConnectionSummaryDto;
 import com.example.Triage.model.dto.DbConnectContextDto;
+import com.example.common.export.ExportBundle;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -36,6 +38,7 @@ public class DbConnectionHandler {
     private final DbConnectionRegistry registry;
     private final DbIdentityService identityService;
     private final DbFlywayService flywayService;
+    private final DbExportService exportService;
 
     public DbConnectionResponse createConnection(DbConnectionRequest req) throws Exception {
         log.info("#createConnection: Creating connection for request: {}", req);
@@ -218,6 +221,18 @@ public class DbConnectionHandler {
         } catch (Exception e) {
             log.error("#exportDiagnostics: Export failed for connectionId: {}", connectionId, e);
             throw new ConnectionNotFoundException("EXPORT_DIAGNOSTICS_FAILED.");
+        }
+    }
+    
+    public ExportBundle exportDiagnosticsBundle(String connectionId) {
+        log.info("#exportDiagnosticsBundle: Exporting diagnostics bundle for connectionId: {}", connectionId);
+        try {
+            // Use existing export method and convert to bundle format
+            ExportDiagnosticsResponse response = exportDiagnostics(connectionId);
+            return exportService.convertToExportBundle(response);
+        } catch (Exception e) {
+            log.error("#exportDiagnosticsBundle: Export bundle failed for connectionId: {}", connectionId, e);
+            throw new ConnectionNotFoundException("EXPORT_DIAGNOSTICS_BUNDLE_FAILED.");
         }
     }
 }

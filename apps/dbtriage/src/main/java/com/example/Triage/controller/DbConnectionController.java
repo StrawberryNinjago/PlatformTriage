@@ -154,4 +154,19 @@ public class DbConnectionController {
                     .body(new ErrorResponse("EXPORT_DIAGNOSTICS_FAILED", LogUtils.safeMessage(e)));
         }
     }
+
+    @GetMapping("/diagnostics/export/bundle")
+    public ResponseEntity<?> exportDiagnosticsBundle(@RequestParam String connectionId) {
+        log.info("#exportDiagnosticsBundle: Exporting diagnostics bundle for connectionId: {}", connectionId);
+        try {
+            var resp = connectionHandler.exportDiagnosticsBundle(connectionId);
+            return ResponseEntity.ok(resp);
+        } catch (ConnectionNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("CONNECTION_NOT_FOUND", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("EXPORT_DIAGNOSTICS_BUNDLE_FAILED", LogUtils.safeMessage(e)));
+        }
+    }
 }

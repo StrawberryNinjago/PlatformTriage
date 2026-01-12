@@ -33,6 +33,7 @@
 	</properties>
 
 	<modules>
+		<module>common</module>
 		<module>dbtriage</module>
 		<module>platformtriage</module>
 	</modules>

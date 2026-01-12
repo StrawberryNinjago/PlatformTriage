@@ -2,6 +2,7 @@ import axios from 'axios';
 
 const API_BASE = 'http://localhost:8081/api/db';
 const SQL_API_BASE = 'http://localhost:8081/api/sql';
+const DEPLOYMENT_API_BASE = 'http://localhost:8081/api/deployment';
 
 export const apiService = {
   // Connection
@@ -74,6 +75,22 @@ export const apiService = {
   
   // Export diagnostics
   exportDiagnostics: (connectionId) =>
-    axios.get(`${API_BASE}/diagnostics/export`, { params: { connectionId } })
+    axios.get(`${API_BASE}/diagnostics/export`, { params: { connectionId } }),
+  
+  // Export diagnostics bundle (new format)
+  exportDiagnosticsBundle: (connectionId) =>
+    axios.get(`${API_BASE}/diagnostics/export/bundle`, { params: { connectionId } }),
+  
+  // Deployment Doctor APIs
+  getDeploymentSummary: (namespace, selector, release, limitEvents = 50) =>
+    axios.get(`${DEPLOYMENT_API_BASE}/summary`, { 
+      params: { namespace, selector, release, limitEvents } 
+    }),
+  
+  // Export deployment diagnostics
+  exportDeploymentDiagnostics: (namespace, selector, release, limitEvents = 50) =>
+    axios.get(`${DEPLOYMENT_API_BASE}/diagnostics/export`, { 
+      params: { namespace, selector, release, limitEvents } 
+    })
 };
 

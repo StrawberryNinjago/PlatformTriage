@@ -1,7 +1,9 @@
 package com.example.platformtriage.controller;
 
+import com.example.common.export.ExportBundle;
 import com.example.platformtriage.model.response.DeploymentSummaryResponse;
 import com.example.platformtriage.service.DeploymentDoctorService;
+import com.example.platformtriage.service.ExportService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -20,9 +22,11 @@ public class DeploymentDoctorController {
 
   private static final Logger log = LoggerFactory.getLogger(DeploymentDoctorController.class);
   private final DeploymentDoctorService service;
+  private final ExportService exportService;
 
-  public DeploymentDoctorController(DeploymentDoctorService service) {
+  public DeploymentDoctorController(DeploymentDoctorService service, ExportService exportService) {
     this.service = service;
+    this.exportService = exportService;
   }
 
   @GetMapping("/summary")
@@ -40,6 +44,30 @@ public class DeploymentDoctorController {
       return response;
     } catch (Exception e) {
       log.error("✗ Error fetching deployment summary: {}", e.getMessage(), e);
+      throw e;
+    }
+  }
+
+  @GetMapping("/diagnostics/export")
+  public ResponseEntity<ExportBundle> exportDiagnostics(
+      @RequestParam String namespace,
+      @RequestParam(required = false) String selector,
+      @RequestParam(required = false) String release,
+      @RequestParam(defaultValue = "50") int limitEvents
+  ) {
+    log.info("📦 Exporting deployment diagnostics for namespace: {}, selector: {}, release: {}", 
+        namespace, selector, release);
+    try {
+      // Get the deployment summary first
+      DeploymentSummaryResponse summary = service.getSummary(namespace, selector, release, limitEvents);
+      
+      // Convert to export bundle
+      ExportBundle exportBundle = exportService.createExportBundle(summary);
+      
+      log.info("✓ Successfully created export bundle");
+      return ResponseEntity.ok(exportBundle);
+    } catch (Exception e) {
+      log.error("✗ Error exporting deployment diagnostics: {}", e.getMessage(), e);
       throw e;
     }
   }

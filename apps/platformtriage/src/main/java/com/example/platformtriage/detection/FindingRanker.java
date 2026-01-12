@@ -29,11 +29,11 @@ public final class FindingRanker {
      * @return Ranked finding with score and breakdown
      */
     public RankedFinding rank(Finding finding, RankingSignals signals) {
-        // Severity weight (ERROR is most critical)
+        // Severity weight (HIGH is most critical)
         int severityWeight = switch (finding.severity()) {
-            case ERROR, HIGH -> 0;        // Most critical
-            case WARN, MED -> 100;        // Medium priority
-            case INFO, LOW -> 200;        // Least critical
+            case HIGH -> 0;        // Most critical
+            case MED -> 100;       // Medium priority
+            case INFO -> 200;      // Least critical
         };
         
         // Code priority (from taxonomy)
