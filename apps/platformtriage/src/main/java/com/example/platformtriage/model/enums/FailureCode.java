@@ -10,71 +10,71 @@ package com.example.platformtriage.model.enums;
 public enum FailureCode {
     /**
      * Query failed: Invalid input, bad selector syntax, namespace issues, or API 400/422 errors.
-     * Owner: Platform (tooling) | Default severity: ERROR
+     * Owner: Platform (tooling) | Default severity: HIGH
      * Priority: 0 (highest - cannot assess system if query fails)
      */
-    QUERY_INVALID(Owner.PLATFORM, Severity.ERROR),
+    QUERY_INVALID(Owner.PLATFORM, Severity.HIGH),
     
     /**
      * Pod cannot start due to missing/invalid K8s config (Secret/ConfigMap/env/volume refs).
-     * Owner: App team | Default severity: ERROR
+     * Owner: App team | Default severity: HIGH
      */
-    BAD_CONFIG(Owner.APP, Severity.ERROR),
+    BAD_CONFIG(Owner.APP, Severity.HIGH),
     
     /**
      * Workload cannot mount/load external secrets (AKV + CSI + SecretProviderClass + identity).
-     * Owner: Platform/DevOps | Default severity: ERROR
+     * Owner: Platform/DevOps | Default severity: HIGH
      */
-    EXTERNAL_SECRET_RESOLUTION_FAILED(Owner.PLATFORM, Severity.ERROR),
+    EXTERNAL_SECRET_RESOLUTION_FAILED(Owner.PLATFORM, Severity.HIGH),
     
     /**
      * Image cannot be pulled (auth, tag missing, registry access).
-     * Owner: Platform/DevOps | Default severity: ERROR
+     * Owner: Platform/DevOps | Default severity: HIGH
      */
-    IMAGE_PULL_FAILED(Owner.PLATFORM, Severity.ERROR),
+    IMAGE_PULL_FAILED(Owner.PLATFORM, Severity.HIGH),
     
     /**
      * Pods run but never become Ready (readiness probe / app health).
-     * Owner: App team | Default severity: ERROR
+     * Owner: App team | Default severity: HIGH
      */
-    READINESS_CHECK_FAILED(Owner.APP, Severity.ERROR),
+    READINESS_CHECK_FAILED(Owner.APP, Severity.HIGH),
     
     /**
      * Containers repeatedly crash (CrashLoopBackOff / OOM / exit codes).
-     * Owner: App team (sometimes Platform for OOM) | Default severity: ERROR
+     * Owner: App team (sometimes Platform for OOM) | Default severity: HIGH
      */
-    CRASH_LOOP(Owner.APP, Severity.ERROR),
+    CRASH_LOOP(Owner.APP, Severity.HIGH),
     
     /**
      * Service has zero endpoints due to label/selector mismatch or readiness gating.
-     * Owner: App team | Default severity: WARN
+     * Owner: App team | Default severity: MED
      */
-    SERVICE_SELECTOR_MISMATCH(Owner.APP, Severity.WARN),
+    SERVICE_SELECTOR_MISMATCH(Owner.APP, Severity.MED),
     
     /**
      * Scheduling blocked or evictions due to CPU/memory/node capacity/quotas.
-     * Owner: Platform/DevOps | Default severity: ERROR
+     * Owner: Platform/DevOps | Default severity: HIGH
      */
-    INSUFFICIENT_RESOURCES(Owner.PLATFORM, Severity.ERROR),
+    INSUFFICIENT_RESOURCES(Owner.PLATFORM, Severity.HIGH),
     
     /**
      * Tool or workload is denied by Kubernetes RBAC (for required reads/operations).
-     * Owner: Platform/Security | Default severity: ERROR
+     * Owner: Platform/Security | Default severity: HIGH
      */
-    RBAC_DENIED(Owner.SECURITY, Severity.ERROR),
+    RBAC_DENIED(Owner.SECURITY, Severity.HIGH),
     
     /**
-     * Risk signals / Advisory findings (WARN severity - do not fail overall)
+     * Risk signals / Advisory findings (MED severity - do not fail overall)
      */
-    POD_RESTARTS_DETECTED(Owner.APP, Severity.WARN),
-    POD_SANDBOX_RECYCLE(Owner.PLATFORM, Severity.WARN),
+    POD_RESTARTS_DETECTED(Owner.APP, Severity.MED),
+    POD_SANDBOX_RECYCLE(Owner.PLATFORM, Severity.MED),
     
     /**
      * Legacy/catch-all codes for backward compatibility
      */
-    NO_MATCHING_OBJECTS(Owner.UNKNOWN, Severity.WARN),  // WARN: Cannot assess without objects
-    ROLLOUT_STUCK(Owner.APP, Severity.ERROR),
-    NO_READY_PODS(Owner.APP, Severity.ERROR);
+    NO_MATCHING_OBJECTS(Owner.UNKNOWN, Severity.MED),  // MED: Cannot assess without objects
+    ROLLOUT_STUCK(Owner.APP, Severity.HIGH),
+    NO_READY_PODS(Owner.APP, Severity.HIGH);
     
     private final Owner defaultOwner;
     private final Severity defaultSeverity;

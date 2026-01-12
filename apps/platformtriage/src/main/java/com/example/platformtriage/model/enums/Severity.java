@@ -2,19 +2,33 @@ package com.example.platformtriage.model.enums;
 
 /**
  * Severity levels for findings.
- * ERROR = critical failure blocking operation
- * WARN = non-blocking issue that should be addressed
+ * HIGH = critical failure blocking operation
+ * MED = non-blocking issue that should be addressed (warnings)
  * INFO = informational message
- * 
- * Legacy: HIGH, MED, LOW (mapped to ERROR, WARN, INFO)
  */
 public enum Severity {
-  ERROR,  // Critical failure (was HIGH)
-  WARN,   // Warning (was MED)
-  INFO,   // Informational (was LOW/INFO)
+  HIGH,   // Critical failure (blocks operation)
+  MED,    // Warning (should be addressed, but not blocking)
+  INFO;   // Informational (advisory only)
   
-  // Legacy compatibility
-  HIGH,   // Use ERROR instead
-  MED,    // Use WARN instead
-  LOW     // Use INFO instead
+  /**
+   * Get explicit rank for severity comparison.
+   * Higher rank = more severe.
+   */
+  public int getRank() {
+    return switch (this) {
+      case HIGH -> 3;
+      case MED -> 2;
+      case INFO -> 1;
+    };
+  }
+  
+  /**
+   * Get the maximum severity from a collection of severities.
+   */
+  public static Severity max(Severity a, Severity b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return a.getRank() >= b.getRank() ? a : b;
+  }
 }

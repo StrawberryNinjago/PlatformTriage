@@ -218,18 +218,26 @@ public class DeploymentDoctorService {
         // Map to DTOs (your EventInfo uses @JsonProperty("timestamp") already)
         List<EventInfo> relatedEvents = selected.stream().map(this::toEventInfo).toList();
 
-        // Detect BackOff pods from events (CrashLoop-like even if pod reason flips between Error / CrashLoopBackOff)
+        // Pod infos + breakdown
+        List<PodInfo> podInfos = pods.stream().map(this::toPodInfo).toList();
+
+        // Compute not-ready pod names - key for filtering BackOff events
+        Set<String> notReadyPodNames = podInfos.stream()
+                .filter(p -> !p.ready())
+                .map(PodInfo::name)
+                .collect(Collectors.toSet());
+
+        // Detect BackOff pods from events - ONLY for pods that are currently not Ready
+        // This prevents treating transient restarts of healthy pods as crash loops
         Set<String> backoffPods = relatedEvents.stream()
                 .filter(e -> "Pod".equals(e.involvedObjectKind()))
-                .filter(e -> podNames.contains(e.involvedObjectName()))
+                .filter(e -> notReadyPodNames.contains(e.involvedObjectName())) // key change: only not-ready pods
                 .filter(e -> "Warning".equalsIgnoreCase(e.type()))
                 .filter(e -> "BackOff".equalsIgnoreCase(e.reason()))
                 .map(EventInfo::involvedObjectName)
                 .filter(StringUtils::hasText)
                 .collect(Collectors.toSet());
 
-        // Pod infos + breakdown
-        List<PodInfo> podInfos = pods.stream().map(this::toPodInfo).toList();
         Map<String, Integer> breakdown = computePodBreakdown(podInfos, backoffPods);
 
         // Workloads
@@ -254,17 +262,17 @@ public class DeploymentDoctorService {
         // Findings - Platform Failure Taxonomy (MVP 8 codes + Risk signals)
         List<Finding> findings = new ArrayList<>();
 
-        // Run all detection rules - ERROR severity (failures)
+        // Run all detection rules - HIGH severity (critical failures)
         findings.addAll(detectBadConfig(podInfos, relatedEvents));
         findings.addAll(detectExternalSecretResolutionFailed(podInfos, relatedEvents));
         findings.addAll(detectImagePullFailed(podInfos, relatedEvents));
         findings.addAll(detectReadinessCheckFailed(podInfos, relatedEvents));
-        findings.addAll(detectCrashLoop(podInfos, relatedEvents, backoffPods));
+        findings.addAll(detectCrashLoop(podInfos, relatedEvents, backoffPods, notReadyPodNames));
         findings.addAll(detectServiceSelectorMismatch(services, endpointsByService, pods));
         findings.addAll(detectInsufficientResources(podInfos, relatedEvents));
         findings.addAll(detectRbacDenied(relatedEvents));
 
-        // Run risk signal detection - WARN severity (advisory)
+        // Run risk signal detection - MED severity (warnings/advisories)
         // Compute restart deltas (only warn on NEW restarts since last load)
         java.time.Instant now = java.time.Instant.now();
         restartBaselineStore.evictExpired(now);
@@ -881,8 +889,9 @@ public class DeploymentDoctorService {
 
     /**
      * E. CRASH_LOOP Trigger: CrashLoopBackOff | Restarts > 0 | BackOff events
+     * ONLY for pods that are currently not Ready (filters out transient restarts of healthy pods)
      */
-    private List<Finding> detectCrashLoop(List<PodInfo> pods, List<EventInfo> events, Set<String> backoffPods) {
+    private List<Finding> detectCrashLoop(List<PodInfo> pods, List<EventInfo> events, Set<String> backoffPods, Set<String> notReadyPodNames) {
         List<Evidence> evidence = new ArrayList<>();
 
         // Pattern 1: Pods with CrashLoopBackOff reason or in backoff set
@@ -892,9 +901,11 @@ public class DeploymentDoctorService {
                 .forEach(p -> evidence.add(new Evidence("Pod", p.name(),
                 "Restarts: " + p.restarts() + ", Reason: " + p.reason())));
 
-        // Pattern 2: BackOff events
+        // Pattern 2: BackOff events - ONLY for pods that are currently not Ready
         events.stream()
                 .filter(e -> "Warning".equalsIgnoreCase(e.type()))
+                .filter(e -> "Pod".equals(e.involvedObjectKind()))
+                .filter(e -> notReadyPodNames.contains(e.involvedObjectName())) // key change: only not-ready pods
                 .filter(e -> "BackOff".equalsIgnoreCase(e.reason())
                 || (e.message() != null && e.message().contains("Back-off restarting failed container")))
                 .forEach(e -> evidence.add(new Evidence("Event", e.involvedObjectName(), e.message())));
@@ -1052,7 +1063,7 @@ public class DeploymentDoctorService {
         ));
     }
 
-    // -------------------- Risk Signal Detection (WARN severity) --------------------
+    // -------------------- Risk Signal Detection (MED severity) --------------------
     /**
      * RISK SIGNAL: POD_RESTARTS_DETECTED
      *
@@ -1072,10 +1083,10 @@ public class DeploymentDoctorService {
         int totalRestarts = 0; // Track cumulative restarts for first-load scenarios
 
         // ⭐ THRESHOLD: Only warn on first load if restarts >= this value
-        // Rationale: 0-2 lifetime restarts = normal operations (deployments, rolling updates)
-        // 3+ restarts = instability signal worth investigating
-        // This balances demo clarity (Healthy App = PASS, Restart Warning = WARN) with production use
-        final int FIRST_LOAD_THRESHOLD = 3;
+        // Rationale: Any restarts on healthy pods warrant investigation (transient crashes, config issues)
+        // Lowered to 1 to catch "restart warning" scenarios (pods restarted but are now healthy)
+        // After initial baseline, only delta (NEW restarts) will trigger warnings
+        final int FIRST_LOAD_THRESHOLD = 1;
 
         // Pattern: Pod is Running AND Ready AND has significant restarts
         for (PodInfo p : pods) {
@@ -1282,10 +1293,10 @@ public class DeploymentDoctorService {
             return null;
         }
 
-        // Select highest priority ERROR-severity finding
-        // (WARN findings have lower priority and won't be selected here)
+        // Select highest priority HIGH-severity finding
+        // (MED findings have lower priority and won't be selected here)
         return findings.stream()
-                .filter(f -> f.severity() == Severity.ERROR || f.severity() == Severity.HIGH)
+                .filter(f -> f.severity() == Severity.HIGH)
                 .min(Comparator.comparingInt(Finding::getPriority))
                 .orElse(null);
     }
@@ -1295,8 +1306,8 @@ public class DeploymentDoctorService {
      * the top warning using priority ordering.
      *
      * CONTRACT RULE: - topWarning is the highest priority finding with severity
-     * == WARN or MED - topWarning can be present even when overall == PASS (if
-     * warnings exist) - topWarning is independent of primaryFailure
+     * == MED - topWarning can be present even when overall == PASS (if warnings
+     * exist) - topWarning is independent of primaryFailure
      *
      * This gives UI a stable "top warning" to display without re-implementing
      * prioritization.
@@ -1306,14 +1317,26 @@ public class DeploymentDoctorService {
             return null;
         }
 
-        // Select highest priority WARN-severity finding
+        // Select highest priority MED-severity finding
         return findings.stream()
-                .filter(f -> f.severity() == Severity.WARN || f.severity() == Severity.MED)
+                .filter(f -> f.severity() == Severity.MED)
                 .min(Comparator.comparingInt(Finding::getPriority))
                 .orElse(null);
     }
 
     // -------------------- status helpers --------------------
+    /**
+     * ==================== OVERALL STATUS REDUCER ==================== Compute
+     * overall status from findings using explicit severity ranking.
+     *
+     * Logic: 1. NO_MATCHING_OBJECTS → UNKNOWN (cannot assess) 2. Any HIGH
+     * severity → FAIL (critical blocking failures) 3. Any MED severity → WARN
+     * (non-blocking warnings/advisories) 4. Otherwise → PASS
+     *
+     * This ensures: - Restart warnings (MED) show WARN, not FAIL -
+     * CrashLoopBackOff (HIGH) shows FAIL - Clear separation between failures
+     * and warnings
+     */
     private OverallStatus computeOverall(List<Finding> findings) {
         // Check for NO_MATCHING_OBJECTS first - cannot assess if nothing found
         boolean noMatching = findings.stream()
@@ -1322,28 +1345,25 @@ public class DeploymentDoctorService {
             return OverallStatus.UNKNOWN;
         }
 
-        // Check for ERROR or legacy HIGH severity
-        // These are actual failures that should fail overall
-        boolean hasError = findings.stream().anyMatch(f
-                -> f.severity() == Severity.ERROR || f.severity() == Severity.HIGH);
-        if (hasError) {
-            return OverallStatus.FAIL;
+        // Find the maximum severity across all findings
+        Severity maxSeverity = findings.stream()
+                .map(Finding::severity)
+                .reduce(Severity::max)
+                .orElse(null);
+
+        if (maxSeverity == null) {
+            return OverallStatus.PASS;
         }
 
-        // IMPORTANT: WARN findings do NOT fail overall (overall != FAIL)
-        // They are risk signals / advisory findings
-        // But they DO set overall = WARN (not PASS)
-        // Check both WARN and legacy MED severity
-        // 
-        // ⭐ This catches POD_RESTARTS_DETECTED (Severity.WARN) and surfaces it properly
-        // Ensures "Restart Warning" demo shows WARN, not PASS
-        boolean hasWarning = findings.stream().anyMatch(f
-                -> f.severity() == Severity.WARN || f.severity() == Severity.MED);
-        if (hasWarning) {
-            return OverallStatus.WARN;
-        }
-
-        return OverallStatus.PASS;
+        // Map severity to overall status using explicit ranking
+        return switch (maxSeverity) {
+            case HIGH ->
+                OverallStatus.FAIL;   // Critical failures
+            case MED ->
+                OverallStatus.WARN;    // Warnings/advisories
+            case INFO ->
+                OverallStatus.PASS;   // Informational only
+        };
     }
 
     private String computeDeploymentsReadyString(Collection<V1Deployment> deployments) {

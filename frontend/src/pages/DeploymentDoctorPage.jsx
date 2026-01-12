@@ -160,36 +160,28 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     if (field === 'release') setRelease(value);
   };
 
-  // ⭐ IMPROVEMENT 1: Severity-driven icons (not "check = detected")
+  // ⭐ IMPROVEMENT 1: Severity-driven icons (backend uses HIGH/MED/INFO)
   const getSeverityIcon = (severity) => {
     switch ((severity || '').toUpperCase()) {
-      case 'ERROR':
       case 'HIGH':
-        return <ErrorIcon />;
-      case 'WARN':
+        return <ErrorIcon color="error" />;
       case 'MED':
-        return <WarningIcon />;
+        return <WarningIcon color="warning" />;
       case 'INFO':
-      case 'LOW':
-        return <InfoIcon />;
       default:
-        return <CheckCircleIcon />;
+        return <CheckCircleIcon color="info" />;
     }
   };
 
   const getSeverityColor = (severity) => {
     switch ((severity || '').toUpperCase()) {
-      case 'ERROR':
       case 'HIGH':
         return 'error';
-      case 'WARN':
       case 'MED':
         return 'warning';
       case 'INFO':
-      case 'LOW':
-        return 'info';
       default:
-        return 'success';
+        return 'info';
     }
   };
 
@@ -221,21 +213,14 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       return {
         overall: 'PASS',
         deploymentsReady: '0/0',
-        pods: { running: 0, pending: 0, crashLoop: 0, imagePullBackOff: 0, notReady: 0 },
-        hasWarnings: false
+        pods: { running: 0, pending: 0, crashLoop: 0, imagePullBackOff: 0, notReady: 0 }
       };
     }
-    
-    // Check if there are WARN severity findings
-    const hasWarnings = summary.findings?.some(f => 
-      f.severity === 'WARN' || f.severity === 'MED'
-    ) || false;
     
     return {
       overall: summary.health.overall,
       deploymentsReady: summary.health.deploymentsReady,
-      pods: summary.health.pods,
-      hasWarnings: hasWarnings
+      pods: summary.health.pods
     };
   };
 
@@ -513,9 +498,29 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
         <Box>
 
           {/* Summary Cards - ⭐ IMPROVEMENT 4: De-emphasize when diagnosis exists */}
+          {(() => {
+            // Helper to rank severity
+            const severityRank = (s) => {
+              switch ((s || '').toUpperCase()) {
+                case 'HIGH': return 3;
+                case 'MED':  return 2;
+                case 'INFO': return 1;
+                default:     return 0;
+              }
+            };
+
+            // Determine if there's a primary finding
+            let hasPrimaryFinding = summary.primaryFailure;
+            if (!hasPrimaryFinding && summary.findings && summary.findings.length > 0) {
+              hasPrimaryFinding = summary.findings
+                .slice()
+                .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))[0];
+            }
+
+            return (
           <Grid container spacing={3} sx={{ 
             mb: 3,
-            ...(summary.primaryFailure && {
+            ...(hasPrimaryFinding && {
               opacity: 0.7,
               filter: 'grayscale(0.3)'
             })
@@ -526,67 +531,57 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                   <Typography color="textSecondary" gutterBottom>
                     Overall
                   </Typography>
-                  <Chip
-                    label={
-                      getHealthFromSummary().overall === 'PASS' && getHealthFromSummary().hasWarnings
-                        ? 'PASS (with warnings)'
-                        : getHealthFromSummary().overall
-                    }
-                    color={
-                      getHealthFromSummary().overall === 'FAIL' ? 'error' : 
-                      getHealthFromSummary().overall === 'WARN' ? 'warning' :
-                      getHealthFromSummary().overall === 'UNKNOWN' ? 'default' :
-                      getHealthFromSummary().hasWarnings ? 'warning' :  // PASS but has warnings → yellow
-                      'success'
-                    }
-                    icon={
-                      getHealthFromSummary().overall === 'FAIL' ? <ErrorIcon /> :
-                      getHealthFromSummary().overall === 'WARN' ? <WarningIcon /> :
-                      getHealthFromSummary().overall === 'UNKNOWN' ? <HelpOutlineIcon /> :
-                      getHealthFromSummary().hasWarnings ? <WarningIcon /> :  // PASS with warnings → warning icon
-                      <CheckCircleIcon />
-                    }
-                    sx={{ 
-                      fontWeight: 'bold', 
-                      fontSize: '1rem',
-                      ...(getHealthFromSummary().overall === 'UNKNOWN' && {
-                        border: '2px dashed',
-                        backgroundColor: 'transparent'
-                      })
-                    }}
-                  />
-                  
-                  {/* ⭐ POLISH 2: Explanatory microcopy for PASS with warnings */}
-                  {getHealthFromSummary().overall === 'PASS' && getHealthFromSummary().hasWarnings && (
-                    <Typography 
-                      variant="caption" 
-                      color="text.secondary" 
-                      sx={{ 
-                        display: 'block', 
-                        mt: 1, 
-                        fontSize: '0.75rem',
-                        lineHeight: 1.3
-                      }}
-                    >
-                      Deployment is healthy, but advisory signals were detected.
-                    </Typography>
-                  )}
-                  
-                  {/* Also add microcopy for UNKNOWN status */}
-                  {getHealthFromSummary().overall === 'UNKNOWN' && (
-                    <Typography 
-                      variant="caption" 
-                      color="text.secondary" 
-                      sx={{ 
-                        display: 'block', 
-                        mt: 1, 
-                        fontSize: '0.75rem',
-                        lineHeight: 1.3
-                      }}
-                    >
-                      No matching resources found. Check your selector.
-                    </Typography>
-                  )}
+                  {(() => {
+                    const overall = summary?.health?.overall;
+                    const overallChip = (() => {
+                      switch ((overall || '').toUpperCase()) {
+                        case 'FAIL':
+                          return { label: 'FAIL', color: 'error', icon: <ErrorIcon /> };
+                        case 'WARN':
+                          return { label: 'WARN', color: 'warning', icon: <WarningIcon /> };
+                        case 'PASS':
+                          return { label: 'PASS', color: 'success', icon: <CheckCircleIcon /> };
+                        case 'UNKNOWN':
+                          return { label: 'UNKNOWN', color: 'default', icon: <HelpOutlineIcon /> };
+                        default:
+                          return { label: 'PASS', color: 'success', icon: <CheckCircleIcon /> };
+                      }
+                    })();
+                    
+                    return (
+                      <>
+                        <Chip
+                          label={overallChip.label}
+                          color={overallChip.color}
+                          icon={overallChip.icon}
+                          sx={{ 
+                            fontWeight: 'bold', 
+                            fontSize: '1rem',
+                            ...(overallChip.color === 'default' && {
+                              border: '2px dashed',
+                              backgroundColor: 'transparent'
+                            })
+                          }}
+                        />
+                        
+                        {/* Explanatory microcopy for UNKNOWN status */}
+                        {overall === 'UNKNOWN' && (
+                          <Typography 
+                            variant="caption" 
+                            color="text.secondary" 
+                            sx={{ 
+                              display: 'block', 
+                              mt: 1, 
+                              fontSize: '0.75rem',
+                              lineHeight: 1.3
+                            }}
+                          >
+                            No matching resources found. Check your selector.
+                          </Typography>
+                        )}
+                      </>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             </Grid>
@@ -633,18 +628,41 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
               </Card>
             </Grid>
           </Grid>
+            );
+          })()}
 
-          {/* ⭐ IMPROVEMENT 2: Primary Failure/Warning Panel */}
-          {summary.primaryFailure && (
+          {/* ⭐ IMPROVEMENT 2: Primary Failure/Warning Panel - Data-driven by highest severity */}
+          {(() => {
+            // Helper to rank severity
+            const severityRank = (s) => {
+              switch ((s || '').toUpperCase()) {
+                case 'HIGH': return 3;
+                case 'MED':  return 2;
+                case 'INFO': return 1;
+                default:     return 0;
+              }
+            };
+
+            // Use backend primaryFailure if available, otherwise compute from findings
+            let primaryFinding = summary.primaryFailure;
+            if (!primaryFinding && summary.findings && summary.findings.length > 0) {
+              primaryFinding = summary.findings
+                .slice()
+                .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))[0];
+            }
+
+            if (!primaryFinding) return null;
+
+            return (
             <Paper 
               elevation={4} 
               sx={{ 
                 p: 3, 
                 mb: 3, 
                 border: '3px solid',
-                borderColor: getSeverityColor(summary.primaryFailure.severity) + '.main',
-                bgcolor: getSeverityColor(summary.primaryFailure.severity) + '.50',
-                background: `linear-gradient(135deg, ${getSeverityColor(summary.primaryFailure.severity) === 'error' ? 'rgba(211, 47, 47, 0.08)' : getSeverityColor(summary.primaryFailure.severity) === 'warning' ? 'rgba(237, 108, 2, 0.08)' : 'rgba(2, 136, 209, 0.08)'} 0%, rgba(255, 255, 255, 0) 100%)`
+                borderColor: getSeverityColor(primaryFinding.severity) + '.main',
+                bgcolor: getSeverityColor(primaryFinding.severity) + '.50',
+                background: `linear-gradient(135deg, ${getSeverityColor(primaryFinding.severity) === 'error' ? 'rgba(211, 47, 47, 0.08)' : getSeverityColor(primaryFinding.severity) === 'warning' ? 'rgba(237, 108, 2, 0.08)' : 'rgba(2, 136, 209, 0.08)'} 0%, rgba(255, 255, 255, 0) 100%)`
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
@@ -654,13 +672,13 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                     fontWeight: 700, 
                     fontSize: '0.85rem',
                     letterSpacing: '0.1em',
-                    color: getSeverityColor(summary.primaryFailure.severity) + '.dark'
+                    color: getSeverityColor(primaryFinding.severity) + '.dark'
                   }}
                 >
                   {/* ⭐ FIX 1: Different labels based on severity */}
-                  {summary.primaryFailure.severity === 'ERROR' || summary.primaryFailure.severity === 'HIGH' 
+                  {primaryFinding.severity === 'HIGH' 
                     ? '🎯 PRIMARY ROOT CAUSE'
-                    : summary.primaryFailure.severity === 'WARN' || summary.primaryFailure.severity === 'MED'
+                    : primaryFinding.severity === 'MED'
                     ? '⚠️ TOP WARNING'
                     : 'ℹ️ NOTABLE SIGNAL'}
                 </Typography>
@@ -668,36 +686,36 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
 
               <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 2 }}>
                 <Box sx={{ 
-                  color: getSeverityColor(summary.primaryFailure.severity) + '.main',
+                  color: getSeverityColor(primaryFinding.severity) + '.main',
                   fontSize: '2rem',
                   lineHeight: 1
                 }}>
-                  {getSeverityIcon(summary.primaryFailure.severity)}
+                  {getSeverityIcon(primaryFinding.severity)}
                 </Box>
                 <Box sx={{ flex: 1 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1, flexWrap: 'wrap' }}>
                     <Typography variant="h5" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                      {summary.primaryFailure.title}
+                      {primaryFinding.title}
                     </Typography>
                     <Chip 
-                      label={summary.primaryFailure.code} 
+                      label={primaryFinding.code} 
                       size="small"
                       sx={{ 
                         fontFamily: 'monospace', 
                         fontWeight: 600,
-                        bgcolor: getSeverityColor(summary.primaryFailure.severity) + '.main',
+                        bgcolor: getSeverityColor(primaryFinding.severity) + '.main',
                         color: 'white'
                       }}
                     />
-                    {summary.primaryFailure.owner && getOwnerBadge(summary.primaryFailure.owner)}
+                    {primaryFinding.owner && getOwnerBadge(primaryFinding.owner)}
                   </Box>
                   
                   <Typography variant="body1" sx={{ mb: 2, color: 'text.primary', lineHeight: 1.6 }}>
-                    {summary.primaryFailure.explanation}
+                    {primaryFinding.explanation}
                   </Typography>
 
                   {/* ⭐ IMPROVEMENT 5: Evidence linkage with visual hierarchy */}
-                  {summary.primaryFailure.evidence && summary.primaryFailure.evidence.length > 0 && (
+                  {primaryFinding.evidence && primaryFinding.evidence.length > 0 && (
                     <Box sx={{ 
                       mb: 2, 
                       p: 2, 
@@ -710,7 +728,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                         📋 Evidence
                       </Typography>
                       <List dense sx={{ pl: 2 }}>
-                        {summary.primaryFailure.evidence.map((ev, idx) => (
+                        {primaryFinding.evidence.map((ev, idx) => (
                           <ListItem key={idx} sx={{ pl: 0, py: 0.5 }}>
                             <Typography variant="body2" component="div">
                               <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
@@ -738,7 +756,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                   )}
 
                   {/* Next Steps */}
-                  {summary.primaryFailure.nextSteps && summary.primaryFailure.nextSteps.length > 0 && (
+                  {primaryFinding.nextSteps && primaryFinding.nextSteps.length > 0 && (
                     <Box sx={{ 
                       p: 2, 
                       bgcolor: 'info.50',
@@ -750,7 +768,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                         💡 Next Steps
                       </Typography>
                       <Box component="ol" sx={{ mt: 0, mb: 0, pl: 2.5 }}>
-                        {summary.primaryFailure.nextSteps.map((step, idx) => (
+                        {primaryFinding.nextSteps.map((step, idx) => (
                           <Typography 
                             key={idx} 
                             component="li" 
@@ -766,13 +784,32 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                 </Box>
               </Box>
             </Paper>
-          )}
+            );
+          })()}
 
           {/* All Findings Section - Show even when Overall = PASS if there are WARN findings */}
           {(() => {
             // ⭐ POLISH 1: Filter out primary failure to avoid duplication
+            // Helper to rank severity
+            const severityRank = (s) => {
+              switch ((s || '').toUpperCase()) {
+                case 'HIGH': return 3;
+                case 'MED':  return 2;
+                case 'INFO': return 1;
+                default:     return 0;
+              }
+            };
+
+            // Determine what the primary finding is (same logic as above)
+            let primaryFinding = summary.primaryFailure;
+            if (!primaryFinding && summary.findings && summary.findings.length > 0) {
+              primaryFinding = summary.findings
+                .slice()
+                .sort((a, b) => severityRank(b.severity) - severityRank(a.severity))[0];
+            }
+
             const additionalFindings = summary.findings?.filter(
-              f => !summary.primaryFailure || f.code !== summary.primaryFailure.code
+              f => !primaryFinding || f.code !== primaryFinding.code
             ) || [];
             
             // Only show section if there are findings OR if we want to show a message
@@ -781,19 +818,10 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             return (
               <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
                 <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  {summary.primaryFailure ? 'Additional Findings' : 'Findings'}
-                  {getHealthFromSummary().overall === 'PASS' && getHealthFromSummary().hasWarnings && (
-                    <Chip 
-                      label="Advisory" 
-                      size="small" 
-                      color="warning" 
-                      variant="outlined"
-                      sx={{ fontSize: '0.7rem' }}
-                    />
-                  )}
+                  {primaryFinding ? 'Additional Findings' : 'Findings'}
                 </Typography>
                 
-                {additionalFindings.length === 0 && summary.primaryFailure ? (
+                {additionalFindings.length === 0 && primaryFinding ? (
                   // ⭐ POLISH 1: Show subtle message when no additional findings
                   <Typography 
                     variant="body2" 
