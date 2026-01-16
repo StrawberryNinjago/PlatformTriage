@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: SmokeTests
+  
+  # Multipart file upload configuration
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+server:
+  port: 8081
+  error:
+    include-message: always
+    include-binding-errors: always
+
+# Logging
+logging:
+  level:
+    com.example.smoketests: INFO
+    org.springframework.web: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# Smoke Tests specific configuration
+smoke:
+  cache:
+    directory: ${user.home}/.triage/smoketests
+  specs:
+    blob-base-path: /specs
+  workflows:
+    catalog-path: /workflows
+  execution:
+    default-timeout-ms: 60000
+    max-concurrent-runs: 10
