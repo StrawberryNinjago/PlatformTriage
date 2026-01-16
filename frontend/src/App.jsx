@@ -5,6 +5,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import ConsolePanel from './components/ConsolePanel';
 import DBDoctorPage from './pages/DBDoctorPage';
 import DeploymentDoctorPage from './pages/DeploymentDoctorPage';
+import SmokeTestsPage from './pages/SmokeTestsPage';
 import ExportsPage from './pages/ExportsPage';
 import HelpPage from './pages/HelpPage';
 import './App.css';
@@ -95,6 +96,7 @@ function App() {
             >
               <Tab label="DB Doctor" />
               <Tab label="Deployment Doctor" />
+              <Tab label="Smoke Tests" />
               <Tab label="Exports" />
               <Tab label="Help" />
             </Tabs>
@@ -122,12 +124,18 @@ function App() {
           )}
 
           {activeModuleTab === 2 && (
-            <ExportsPage
+            <SmokeTestsPage
               addConsoleMessage={addConsoleMessage}
             />
           )}
 
           {activeModuleTab === 3 && (
+            <ExportsPage
+              addConsoleMessage={addConsoleMessage}
+            />
+          )}
+
+          {activeModuleTab === 4 && (
             <HelpPage />
           )}
         </Box>

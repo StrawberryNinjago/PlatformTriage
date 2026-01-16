@@ -3,6 +3,7 @@ import axios from 'axios';
 const API_BASE = 'http://localhost:8081/api/db';
 const SQL_API_BASE = 'http://localhost:8081/api/sql';
 const DEPLOYMENT_API_BASE = 'http://localhost:8081/api/deployment';
+const SMOKE_TEST_API_BASE = 'http://localhost:8081/api/smoke-tests';
 
 export const apiService = {
   // Connection
@@ -91,6 +92,19 @@ export const apiService = {
   exportDeploymentDiagnostics: (namespace, selector, release, limitEvents = 50) =>
     axios.get(`${DEPLOYMENT_API_BASE}/diagnostics/export`, { 
       params: { namespace, selector, release, limitEvents } 
-    })
+    }),
+  
+  // Smoke Tests APIs
+  runSmokeTests: (config) =>
+    axios.post(`${SMOKE_TEST_API_BASE}/run`, config),
+  
+  validateSmokeTestConfig: (config) =>
+    axios.post(`${SMOKE_TEST_API_BASE}/validate`, config),
+  
+  getSmokeTestHistory: (limit = 20) =>
+    axios.get(`${SMOKE_TEST_API_BASE}/history`, { params: { limit } }),
+  
+  exportSmokeTestResults: (runId) =>
+    axios.get(`${SMOKE_TEST_API_BASE}/export`, { params: { runId } })
 };
 
