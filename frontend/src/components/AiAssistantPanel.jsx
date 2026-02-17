@@ -14,45 +14,91 @@ import {
 import { AutoAwesome, Psychology, Summarize } from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 
-const defaultPrompts = [
-  {
-    id: 'summarize',
-    label: 'Summarize',
-    icon: <Summarize fontSize="small" />,
-    text: 'Summarize the latest DB Doctor results and list next steps.'
+const assistantProfiles = {
+  'db-doctor': {
+    title: 'LLM Assistant',
+    subtitle: 'Ask questions about the latest DB Doctor diagnostics, or use a quick prompt to get a summary.',
+    noMessagesMessage: 'No assistant messages yet. Run a DB Doctor action, then ask for a summary or diagnosis.',
+    inputLabel: 'Ask or paste connection params',
+    prompts: [
+      {
+        id: 'summarize',
+        label: 'Summarize',
+        icon: <Summarize fontSize="small" />,
+        text: 'Summarize the latest DB Doctor results and list next steps.'
+      },
+      {
+        id: 'risks',
+        label: 'Risks',
+        icon: <Psychology fontSize="small" />,
+        text: 'What are the top risks or likely root causes from the latest results?'
+      },
+      {
+        id: 'flyway',
+        label: 'Flyway Health',
+        text: 'I want to check flyway health.'
+      },
+      {
+        id: 'tables',
+        label: 'What tables',
+        text: 'What are the tables in this schema?'
+      },
+      {
+        id: 'details',
+        label: 'Table Details',
+        text: 'Show a table details for cart_item.'
+      },
+      {
+        id: 'permission',
+        label: 'Table Permission',
+        text: 'Do I have permission for cart_item?'
+      },
+      {
+        id: 'sql',
+        label: 'SQL Why',
+        text: 'Why this SQL does not work: SELECT * FROM cart_item WHERE id = 1;'
+      }
+    ],
+    connectionShortcuts: [
+      {
+        id: 'dev',
+        label: 'Use dev docker (5433)',
+        connection: { host: 'localhost', port: 5433, database: 'cartdb', username: 'cart_user', sslMode: 'disable', schema: 'public' }
+      },
+      {
+        id: 'local',
+        label: 'Use local default (5432)',
+        connection: { host: 'localhost', port: 5432, database: 'cartdb', username: 'cart_user', sslMode: 'disable', schema: 'public' }
+      }
+    ],
+    connectionNote: 'Password is not filled; paste it in the Connection panel before connecting.'
   },
-  {
-    id: 'risks',
-    label: 'Risks',
-    icon: <Psychology fontSize="small" />,
-    text: 'What are the top risks or likely root causes from the latest results?'
-  },
-  {
-    id: 'flyway',
-    label: 'Flyway Health',
-    text: 'I want to check flyway health.'
-  },
-  {
-    id: 'tables',
-    label: 'What tables',
-    text: 'What are the tables in this schema?'
-  },
-  {
-    id: 'details',
-    label: 'Table Details',
-    text: 'Show a table details for cart_item.'
-  },
-  {
-    id: 'permission',
-    label: 'Table Permission',
-    text: 'Do I have permission for cart_item?'
-  },
-  {
-    id: 'sql',
-    label: 'SQL Why',
-    text: 'Why this SQL does not work: SELECT * FROM cart_item WHERE id = 1;'
+  'deployment-doctor': {
+    title: 'Deployment LLM Assistant',
+    subtitle: 'Ask questions about deployment findings, root causes, and next actions.',
+    noMessagesMessage: 'No assistant messages yet. Load a deployment summary first, then ask for an interpretation.',
+    inputLabel: 'Ask about deployment state and findings',
+    prompts: [
+      {
+        id: 'summarize',
+        label: 'Summarize',
+        icon: <Summarize fontSize="small" />,
+        text: 'Summarize the latest deployment summary and top risks.'
+      },
+      {
+        id: 'risks',
+        label: 'Top risks',
+        icon: <Psychology fontSize="small" />,
+        text: 'What are the likely root causes from these findings?'
+      },
+      {
+        id: 'deployment',
+        label: 'Primary issue',
+        text: 'What is the primary failure and what should I fix first?'
+      }
+    ]
   }
-];
+};
 
 export default function AiAssistantPanel({
   tool = 'db-doctor',
@@ -60,7 +106,8 @@ export default function AiAssistantPanel({
   currentAction,
   context,
   onApplyConnection,
-  onToolResult
+  onToolResult,
+  fitHeight = false
 }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -69,6 +116,10 @@ export default function AiAssistantPanel({
   const [error, setError] = useState(null);
 
   const hasContext = useMemo(() => !!context, [context]);
+  const profile = useMemo(() => assistantProfiles[tool] || assistantProfiles['db-doctor'], [tool]);
+  const hasConnectionHelpers = useMemo(() => {
+    return Boolean(onApplyConnection) && profile.connectionShortcuts && profile.connectionShortcuts.length > 0;
+  }, [onApplyConnection, profile.connectionShortcuts]);
 
   const parseConnectionFromText = (text) => {
     if (!text) return null;
@@ -194,13 +245,16 @@ export default function AiAssistantPanel({
         display: 'flex',
         flexDirection: 'column',
         gap: 1,
-        minHeight: { xs: 620, lg: 760 }
+        height: { xs: 'auto', lg: fitHeight ? '100%' : 'auto' },
+        maxHeight: { xs: 'none', lg: fitHeight ? '100%' : 'none' },
+        minHeight: { xs: 620, lg: fitHeight ? 0 : 760 },
+        overflow: fitHeight ? 'hidden' : 'visible'
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <AutoAwesome color="primary" />
         <Typography variant="h4" sx={{ fontWeight: 900 }}>
-          LLM Assistant
+          {profile.title}
         </Typography>
         {messages.length > 0 && (
           <Chip
@@ -215,48 +269,37 @@ export default function AiAssistantPanel({
         variant="body1"
         sx={{ mb: 1, fontSize: '1.22rem', fontWeight: 700, lineHeight: 1.35 }}
       >
-        Ask questions about the latest diagnostics, or use a quick prompt to get a summary.
+        {profile.subtitle}
       </Typography>
 
-      <Box sx={{ mb: 1, p: 1.25, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid #e2e8f0' }}>
-        <Typography variant="body1" sx={{ fontSize: '1.2rem', fontWeight: 800, display: 'block', mb: 0.5 }}>
-          Connection shortcuts
-        </Typography>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-          <Button
-            size="medium"
-            variant="outlined"
-            sx={{ fontSize: '1rem', fontWeight: 700 }}
-            onClick={() =>
-              applyConnection(
-                { host: 'localhost', port: 5433, database: 'cartdb', username: 'cart_user', sslMode: 'disable', schema: 'public' },
-                false
-              )
-            }
-          >
-            Use dev docker (5433)
-          </Button>
-          <Button
-            size="medium"
-            variant="outlined"
-            sx={{ fontSize: '1rem', fontWeight: 700 }}
-            onClick={() =>
-              applyConnection(
-                { host: 'localhost', port: 5432, database: 'cartdb', username: 'cart_user', sslMode: 'disable', schema: 'public' },
-                false
-              )
-            }
-          >
-            Use local default (5432)
-          </Button>
+      {hasConnectionHelpers && (
+        <Box sx={{ mb: 1, p: 1.25, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid #e2e8f0' }}>
+          <Typography variant="body1" sx={{ fontSize: '1.2rem', fontWeight: 800, display: 'block', mb: 0.5 }}>
+            Connection shortcuts
+          </Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            {profile.connectionShortcuts.map((shortcut) => (
+              <Button
+                key={shortcut.id}
+                size="medium"
+                variant="outlined"
+                sx={{ fontSize: '1rem', fontWeight: 700 }}
+                onClick={() => applyConnection(shortcut.connection, false)}
+              >
+                {shortcut.label}
+              </Button>
+            ))}
+          </Box>
+          {profile.connectionNote && (
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontSize: '1.05rem', fontWeight: 600 }}>
+              {profile.connectionNote}
+            </Typography>
+          )}
         </Box>
-        <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontSize: '1.05rem', fontWeight: 600 }}>
-          Password is not filled; paste it in the Connection panel before connecting.
-        </Typography>
-      </Box>
+      )}
 
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
-        {defaultPrompts.map((prompt) => (
+        {profile.prompts.map((prompt) => (
           <Button
             key={prompt.id}
             size="medium"
@@ -298,8 +341,8 @@ export default function AiAssistantPanel({
 
       <Box sx={{
         flex: 1,
-        minHeight: 460,
-        maxHeight: { xs: 'calc(100vh - 430px)', lg: 'calc(100vh - 460px)' },
+        minHeight: 0,
+        maxHeight: { xs: 'calc(100vh - 430px)', lg: fitHeight ? 'none' : 'calc(100vh - 460px)' },
         overflowY: 'auto',
         pr: 1,
         '& .chat-role-label': { fontSize: '1.08rem', fontWeight: 600 },
@@ -311,10 +354,10 @@ export default function AiAssistantPanel({
         {messages.length === 0 && (
           <Box sx={{ p: 2, bgcolor: '#f8fafc', borderRadius: 1, border: '1px dashed #cbd5e1' }}>
             <Typography variant="body1" color="text.secondary" sx={{ fontSize: '1.12rem' }}>
-              No assistant messages yet. Run a DB Doctor action, then ask for a summary or diagnosis.
+              {profile.noMessagesMessage}
             </Typography>
           </Box>
-        )}
+          )}
 
         {messages.map((msg) => (
           <Box key={msg.id} sx={{ mb: 2 }}>
@@ -420,7 +463,7 @@ export default function AiAssistantPanel({
 
       <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'flex-end' }}>
         <TextField
-          label="Ask or paste connection params"
+          label={profile.inputLabel}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           fullWidth

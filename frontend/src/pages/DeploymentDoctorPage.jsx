@@ -30,6 +30,7 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CheckIcon from '@mui/icons-material/Check';
 import axios from 'axios';
+import AiAssistantPanel from '../components/AiAssistantPanel';
 
 // ⭐ Demo Scenarios Configuration
 const WORKLOAD_SCENARIOS = [
@@ -79,6 +80,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   const [release, setRelease] = useState('');
   const [activeScenario, setActiveScenario] = useState(null);
   const [isCustomMode, setIsCustomMode] = useState(false);
+  const [currentAction, setCurrentAction] = useState(null);
 
   const loadDeploymentSummary = async (overrideParams = {}) => {
     // Use override params if provided, otherwise use state
@@ -112,6 +114,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       
       const response = await axios.get(`/api/deployment/summary?${params.toString()}`);
       setSummary(response.data);
+      setCurrentAction('load_summary');
       setK8sStatus('connected');
       addConsoleMessage('✓ Deployment summary loaded', 'success');
     } catch (err) {
@@ -121,6 +124,16 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       addConsoleMessage(`✗ Failed to load deployment summary: ${errorMsg}`, 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAiActionResult = (actionName, payload) => {
+    if (actionName) {
+      setCurrentAction(actionName);
+    }
+
+    if (payload && typeof payload === 'object') {
+      setSummary(payload);
     }
   };
 
@@ -244,7 +257,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   };
 
   const renderConfigurationForm = () => (
-    <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+    <Box sx={{ mb: 3 }}>
       <Typography variant="h6" sx={{ mb: 2 }}>
         Kubernetes Configuration
       </Typography>
@@ -396,42 +409,93 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
           </Button>
         </Grid>
       </Grid>
-    </Paper>
+    </Box>
   );
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 3, pb: 3 }}>
-      <Typography variant="h5" sx={{ mb: 3 }}>
-        Kubernetes Deployment Doctor
-      </Typography>
-
-      {renderConfigurationForm()}
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {!summary && !loading && !error && (
-        <Alert severity="info">
-          Enter a namespace and click Load to fetch deployment information.
-        </Alert>
-      )}
-
-      {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '40vh' }}>
-          <Box sx={{ textAlign: 'center' }}>
-            <CircularProgress size={60} />
-            <Typography variant="h6" sx={{ mt: 2 }}>
-              Loading Deployment Summary...
-            </Typography>
-          </Box>
+    <Container
+      maxWidth={false}
+      sx={{
+        mt: 3,
+        pb: 3,
+        width: '100%',
+        px: { xs: 2, sm: 2.5, md: 3 }
+      }}
+    >
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            lg: 'minmax(540px, 1.2fr) minmax(0, 1.8fr)'
+          },
+          minHeight: { xs: 'auto', lg: 'calc(100vh - 250px)' },
+          width: '100%',
+          gap: 2,
+          alignItems: 'stretch',
+          minWidth: 0
+        }}
+      >
+        <Box sx={{
+          position: { lg: 'sticky' },
+          top: { lg: 16 },
+          minWidth: 0,
+          alignSelf: 'stretch',
+          height: { xs: 'auto', lg: 'calc(100vh - 250px)' }
+        }}>
+          <AiAssistantPanel
+            tool="deployment-doctor"
+            context={summary}
+            currentAction={currentAction}
+            onToolResult={handleAiActionResult}
+            fitHeight={true}
+          />
         </Box>
-      )}
 
-      {summary && !loading && (
-        <Box>
+        <Paper
+          elevation={2}
+          sx={{
+            minWidth: 0,
+            minHeight: 0,
+            height: { xs: 'auto', lg: 'calc(100vh - 250px)' },
+            display: 'flex',
+            flexDirection: 'column',
+            '& .MuiTypography-caption': { fontSize: '1rem' },
+            '& .MuiTableCell-root': { fontSize: '1.05rem' }
+          }}
+        >
+          <Box sx={{ p: 3, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            <Typography variant="h5" sx={{ mb: 3 }}>
+              Kubernetes Deployment Doctor
+            </Typography>
+
+            {renderConfigurationForm()}
+
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
+
+            {!summary && !loading && !error && (
+              <Alert severity="info">
+                Enter a namespace and click Load to fetch deployment information.
+              </Alert>
+            )}
+
+            {loading && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '40vh' }}>
+                <Box sx={{ textAlign: 'center' }}>
+                  <CircularProgress size={60} />
+                  <Typography variant="h6" sx={{ mt: 2 }}>
+                    Loading Deployment Summary...
+                  </Typography>
+                </Box>
+              </Box>
+            )}
+
+            {summary && !loading && (
+              <Box>
 
           {/* Summary Cards - ⭐ IMPROVEMENT 4: De-emphasize when diagnosis exists */}
           {(() => {
@@ -1099,10 +1163,12 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             </Alert>
           )}
         </Box>
-      )}
+            )}
+          </Box>
+        </Paper>
+      </Box>
     </Container>
   );
 }
 
 export default DeploymentDoctorPage;
-

@@ -201,7 +201,13 @@ function DBDoctorPage({
         }}
       >
         {/* Left Rail - LLM */}
-        <Box sx={{ position: { lg: 'sticky' }, top: { lg: 16 }, minWidth: 0, alignSelf: 'stretch' }}>
+        <Box sx={{ 
+          position: { lg: 'sticky' }, 
+          top: { lg: 16 }, 
+          minWidth: 0, 
+          alignSelf: 'stretch',
+          height: { xs: 'auto', lg: 'calc(100vh - 250px)' }
+        }}>
           <AiAssistantPanel
             tool="db-doctor"
             connectionId={connectionId}
@@ -209,6 +215,7 @@ function DBDoctorPage({
             context={results}
             onApplyConnection={handleApplyConnection}
             onToolResult={handleAiActionResult}
+            fitHeight={true}
           />
         </Box>
 
@@ -218,6 +225,9 @@ function DBDoctorPage({
           sx={{
             minWidth: 0,
             minHeight: 0,
+            height: { xs: 'auto', lg: 'calc(100vh - 250px)' },
+            display: 'flex',
+            flexDirection: 'column',
             '& .MuiTypography-caption': { fontSize: '1rem' },
             '& .MuiTableCell-root': { fontSize: '1.05rem' }
           }}
@@ -254,7 +264,7 @@ function DBDoctorPage({
             <Tab label="Compare Environments" />
           </Tabs>
 
-          <Box sx={{ p: 3 }}>
+          <Box sx={{ p: 3, flex: 1, minHeight: 0, overflowY: 'auto' }}>
             {/* Tab 1: Single Environment */}
             {activeTab === 0 && (
               <Box>
