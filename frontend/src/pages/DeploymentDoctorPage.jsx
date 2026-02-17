@@ -84,10 +84,12 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   const [lastToolResult, setLastToolResult] = useState(null);
 
   const configFieldSx = {
-    '& .MuiInputBase-input': { fontSize: '1.24rem', fontWeight: 500 },
-    '& .MuiInputLabel-root': { fontSize: '1.12rem', fontWeight: 700 },
-    '& .MuiInputLabel-root.MuiInputLabel-shrink': { fontSize: '1rem', fontWeight: 700 },
-    '& .MuiFormHelperText-root': { fontSize: '1rem', fontWeight: 500 }
+    '& .MuiInputBase-input': { fontSize: '1.42rem', fontWeight: 600, lineHeight: 1.35 },
+    '& .MuiInputBase-input.Mui-disabled': { WebkitTextFillColor: '#5f6368', opacity: 1, fontWeight: 600 },
+    '& .MuiInputLabel-root': { fontSize: '1.24rem', fontWeight: 800 },
+    '& .MuiInputLabel-root.MuiInputLabel-shrink': { fontSize: '1.12rem', fontWeight: 800 },
+    '& .MuiFormHelperText-root': { fontSize: '1.08rem', fontWeight: 600 },
+    '& .MuiFormHelperText-root.Mui-disabled': { opacity: 1 }
   };
 
   const isDeploymentSummaryPayload = (payload) => {
@@ -571,9 +573,9 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             '& .MuiTableCell-root': { fontSize: '1.05rem' },
             '& .MuiButton-root': { fontSize: '1.08rem', fontWeight: 700 },
             '& .MuiChip-label': { fontSize: '1rem', fontWeight: 700 },
-            '& .MuiInputBase-input': { fontSize: '1.22rem', fontWeight: 500 },
-            '& .MuiInputLabel-root': { fontSize: '1.12rem', fontWeight: 700 },
-            '& .MuiFormHelperText-root': { fontSize: '1rem', fontWeight: 500 },
+            '& .MuiInputBase-input': { fontSize: '1.3rem', fontWeight: 600 },
+            '& .MuiInputLabel-root': { fontSize: '1.2rem', fontWeight: 800 },
+            '& .MuiFormHelperText-root': { fontSize: '1.08rem', fontWeight: 600 },
             '& .MuiAlert-message': { fontSize: '1.08rem', fontWeight: 600 },
             '& .MuiAccordionSummary-content .MuiTypography-root': { fontSize: '1.12rem', fontWeight: 700 }
           }}

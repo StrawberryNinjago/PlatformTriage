@@ -11,7 +11,16 @@ import {
   FormControlLabel,
   CircularProgress
 } from '@mui/material';
-import { AutoAwesome, Psychology, Summarize } from '@mui/icons-material';
+import {
+  AutoAwesome,
+  Dns,
+  List,
+  ListAlt,
+  MonitorHeart,
+  Psychology,
+  Summarize,
+  Shield,
+} from '@mui/icons-material';
 import { apiService } from '../services/apiService';
 
 const assistantProfiles = {
@@ -99,12 +108,44 @@ const assistantProfiles = {
       {
         id: 'pods',
         label: 'Show Pods',
+        icon: <List fontSize="small" />,
         text: 'Show my pods.'
+      },
+      {
+        id: 'unhealthyPods',
+        label: 'Unhealthy Pods',
+        icon: <MonitorHeart fontSize="small" />,
+        text: 'Show unhealthy pods only.'
       },
       {
         id: 'logs',
         label: 'Pod Logs',
-        text: 'Show me the last 10 lines of logs.'
+        icon: <ListAlt fontSize="small" />,
+        text: 'Show last 20 lines of logs.'
+      },
+      {
+        id: 'events',
+        label: 'Recent Events',
+        icon: <ListAlt fontSize="small" />,
+        text: 'List recent events.'
+      },
+      {
+        id: 'warningEvents',
+        label: 'Warning Events',
+        icon: <ListAlt fontSize="small" />,
+        text: 'List warning events only.'
+      },
+      {
+        id: 'services',
+        label: 'Services',
+        icon: <Dns fontSize="small" />,
+        text: 'List services and endpoint status.'
+      },
+      {
+        id: 'deploymentRisks',
+        label: 'Show Risks',
+        icon: <Shield fontSize="small" />,
+        text: 'What are the risks in this summary?'
       }
     ]
   }
@@ -130,6 +171,69 @@ export default function AiAssistantPanel({
   const hasConnectionHelpers = useMemo(() => {
     return Boolean(onApplyConnection) && profile.connectionShortcuts && profile.connectionShortcuts.length > 0;
   }, [onApplyConnection, profile.connectionShortcuts]);
+
+  const includesAny = (text, hints) => hints.some((hint) => text.includes(hint));
+
+  const resolveExecutionChipColor = (msg) => {
+    const mode = (msg?.mode || '').toLowerCase();
+    if (mode === 'tool_error' || mode === 'error') {
+      return 'error';
+    }
+
+    const corpus = [
+      msg?.content || '',
+      ...(msg?.keyFindings || []),
+      ...(msg?.nextSteps || []),
+      ...(msg?.openQuestions || [])
+    ]
+      .join(' ')
+      .toLowerCase();
+
+    if (includesAny(corpus, [
+      'severity: high',
+      'status: fail',
+      'health: fail',
+      'overall status: fail',
+      'overall: fail',
+      'primary failure identified',
+      'primary issue',
+      'not ready',
+      'missing secret',
+      'crashloop',
+      'imagepullbackoff',
+      'error'
+    ])) {
+      return 'error';
+    }
+
+    if (includesAny(corpus, [
+      'severity: med',
+      'severity: warn',
+      'status: warn',
+      'health: warn',
+      'overall status: warn',
+      'overall: warn',
+      'warning',
+      'risk'
+    ])) {
+      return 'warning';
+    }
+
+    if (includesAny(corpus, [
+      'severity: low',
+      'status: pass',
+      'health: pass',
+      'overall status: pass',
+      'overall: pass',
+      'connection identity confirmed',
+      'privileges look sufficient',
+      'healthy'
+    ])) {
+      return 'success';
+    }
+
+    return 'primary';
+  };
 
   const parseConnectionFromText = (text) => {
     if (!text) return null;
@@ -412,7 +516,12 @@ export default function AiAssistantPanel({
 
               {msg.role === 'assistant' && msg.toolExecuted && msg.executedTool && (
                 <Box sx={{ mt: 1 }}>
-                  <Chip label={`Executed: ${msg.executedTool}`} size="small" color="success" className="chat-executed-chip" />
+                  <Chip
+                    label={`Executed: ${msg.executedTool}`}
+                    size="small"
+                    color={resolveExecutionChipColor(msg)}
+                    className="chat-executed-chip"
+                  />
                 </Box>
               )}
 

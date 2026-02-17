@@ -117,6 +117,9 @@ public class OpenAiIntentRouter {
                 - %s
                 - %s
                 - %s
+                - %s
+                - %s
+                - %s
 
                 Use this JSON format and nothing else:
                 {
@@ -125,7 +128,8 @@ public class OpenAiIntentRouter {
                   "params": {
                     "namespace":"...", "selector":"...", "release":"...",
                     "podName":"...", "logLines":"...",
-                    "findingCode":"...", "limitEvents":"..."
+                    "findingCode":"...", "limitEvents":"...",
+                    "warningsOnly":"..."
                   }
                 }
 
@@ -136,6 +140,8 @@ public class OpenAiIntentRouter {
                 PlatformTriageTools.SUMMARIZE,
                 PlatformTriageTools.LIST_PODS,
                 PlatformTriageTools.GET_POD_LOGS,
+                PlatformTriageTools.LIST_EVENTS,
+                PlatformTriageTools.LIST_SERVICES,
                 PlatformTriageTools.PRIMARY_FAILURE,
                 PlatformTriageTools.TOP_WARNING,
                 PlatformTriageTools.FINDING_DETAILS

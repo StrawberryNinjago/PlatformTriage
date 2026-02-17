@@ -37,6 +37,7 @@ public class AiTriageService {
     private static final Pattern SELECTOR_PATTERN = Pattern.compile("(?i)\\b(?:selector|label selector)\\s*[:=]?\\s*([a-zA-Z0-9_.:\\-]+=[-_a-zA-Z0-9/.]+(?:,\\s*[a-zA-Z0-9_.:\\-]+=[-_a-zA-Z0-9/.]+)*)");
     private static final Pattern RELEASE_PATTERN = Pattern.compile("(?i)\\brelease\\s*[:=]?\\s*([\\w.-]+)");
     private static final Pattern LIMIT_EVENTS_PATTERN = Pattern.compile("(?i)\\blimit\\s*events\\s*[:=]?\\s*(\\d+)");
+    private static final Pattern EVENT_COUNT_PATTERN = Pattern.compile("(?i)\\b(?:last|latest|show|show me|display|need|give me)?\\s*(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s+(?:of\\s+)?events?\\b");
     private static final Pattern LOG_LINES_PATTERN = Pattern.compile("(?i)\\b(?:last\\s+)?(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s+(?:lines?|line)\\s+(?:of\\s+)?logs\\b");
     private static final Pattern FINDING_CODE_PATTERN = Pattern.compile("(?i)\\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b");
 
@@ -144,7 +145,10 @@ public class AiTriageService {
         if (StringUtils.hasText(release)) {
             params.put("release", release);
         }
-        String limitEvents = pickLimitFromText(question);
+        String limitEvents = pickEventLimitFromText(question);
+        if (!StringUtils.hasText(limitEvents)) {
+            limitEvents = pickLimitFromText(question);
+        }
         if (!StringUtils.hasText(limitEvents)) {
             limitEvents = pickString(rawContext, "limitEvents");
         }
@@ -158,6 +162,10 @@ public class AiTriageService {
         }
         if (StringUtils.hasText(logLines)) {
             params.put("logLines", logLines);
+        }
+
+        if (isWarningsOnlyRequest(question)) {
+            params.put("warningsOnly", "true");
         }
 
         String podName = pickPodNameFromQuestion(question, summary);
@@ -236,10 +244,16 @@ public class AiTriageService {
                 List.of(
                         "Try: check namespace cart with selector app=cart-app",
                         "Try: show my pods",
+                        "Try: show unhealthy pods only",
+                        "Try: list events",
+                        "Try: list warning events only",
+                        "Try: list services",
                         "Try: show last 10 lines of logs",
                         "Try: summarize",
                         "Try: what is the primary issue",
-                        "Try: what are the risks"
+                        "Try: what are the risks",
+                        "Try: top warning",
+                        "Try: what are the findings"
                 ),
                 List.of("Load a summary first."),
                 List.of(
@@ -266,8 +280,20 @@ public class AiTriageService {
             return AiIntent.from(PlatformTriageTools.GET_POD_LOGS, 0.96d, collectParamsFromQuestion(question, summary));
         }
 
+        if (isPodReadinessRootCauseIntent(normalized)) {
+            return AiIntent.from(PlatformTriageTools.PRIMARY_FAILURE, 0.95d, collectParamsFromQuestion(question, summary));
+        }
+
         if (isPodListIntent(normalized)) {
             return AiIntent.from(PlatformTriageTools.LIST_PODS, 0.95d, collectParamsFromQuestion(question, summary));
+        }
+
+        if (isListEventsIntent(normalized)) {
+            return AiIntent.from(PlatformTriageTools.LIST_EVENTS, 0.93d, collectParamsFromQuestion(question, summary));
+        }
+
+        if (isListServicesIntent(normalized)) {
+            return AiIntent.from(PlatformTriageTools.LIST_SERVICES, 0.93d, collectParamsFromQuestion(question, summary));
         }
 
         // Keep health checks stable against the currently loaded summary unless user asks for refresh.
@@ -305,7 +331,10 @@ public class AiTriageService {
         String namespace = extractNamespace(question);
         String selector = extractSelector(question);
         String release = extractRelease(question);
-        String limitEvents = pickLimitFromText(question);
+        String limitEvents = pickEventLimitFromText(question);
+        if (!StringUtils.hasText(limitEvents)) {
+            limitEvents = pickLimitFromText(question);
+        }
         String logLines = pickLogLines(question);
         String podName = pickPodNameFromQuestion(question, summary);
 
@@ -323,6 +352,9 @@ public class AiTriageService {
         }
         if (StringUtils.hasText(logLines)) {
             params.put("logLines", logLines);
+        }
+        if (isWarningsOnlyRequest(question)) {
+            params.put("warningsOnly", "true");
         }
         if (StringUtils.hasText(podName)) {
             params.put("podName", podName);
@@ -400,6 +432,43 @@ public class AiTriageService {
 
     private String pickLimitFromText(String text) {
         return extractWithPattern(LIMIT_EVENTS_PATTERN, text);
+    }
+
+    private String pickEventLimitFromText(String text) {
+        return extractCountFromText(text, EVENT_COUNT_PATTERN);
+    }
+
+    private String extractCountFromText(String text, Pattern pattern) {
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        String normalized = text.toLowerCase(Locale.ROOT);
+        Matcher matcher = pattern.matcher(normalized);
+        if (!matcher.find()) {
+            return null;
+        }
+        String raw = matcher.group(1);
+        if (raw == null) {
+            return null;
+        }
+        if (raw.matches("\\d+")) {
+            return raw;
+        }
+        return switch (raw) {
+            case "one" -> "1";
+            case "two" -> "2";
+            case "three" -> "3";
+            case "four" -> "4";
+            case "five" -> "5";
+            case "six" -> "6";
+            case "seven" -> "7";
+            case "eight" -> "8";
+            case "nine" -> "9";
+            case "ten" -> "10";
+            case "eleven" -> "11";
+            case "twelve" -> "12";
+            default -> null;
+        };
     }
 
     private String pickLogLines(String text) {
@@ -522,6 +591,82 @@ public class AiTriageService {
 
         boolean hasListVerb = normalized.matches(".*\\b(show|list|display|which|what|all)\\b.*");
         return hasListVerb;
+    }
+
+    private boolean isPodReadinessRootCauseIntent(String normalized) {
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+
+        boolean mentionsPod = normalized.matches(".*\\bpods?\\b.*");
+        boolean asksWhy = containsAny(
+                normalized,
+                "why",
+                "why is",
+                "why are",
+                "reason",
+                "root cause",
+                "main cause",
+                "what happened"
+        );
+        boolean readinessProblem = containsAny(
+                normalized,
+                "not ready",
+                "unready",
+                "pending",
+                "cannot start",
+                "can not start",
+                "failed to start",
+                "crashloop",
+                "crash loop",
+                "createcontainerconfigerror",
+                "imagepullbackoff",
+                "errimagepull"
+        );
+
+        return mentionsPod && asksWhy && readinessProblem;
+    }
+
+    private boolean isListEventsIntent(String normalized) {
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+        if (!containsAny(normalized,
+                "event",
+                "events",
+                "event list",
+                "recent events")) {
+            return false;
+        }
+        return !containsAny(normalized, "reason", "code", "finding", "analysis");
+    }
+
+    private boolean isListServicesIntent(String normalized) {
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+        return containsAny(
+                normalized,
+                "service",
+                "services",
+                "endpoints",
+                "endpoint",
+                "svc",
+                "service details"
+        );
+    }
+
+    private boolean isWarningsOnlyRequest(String normalized) {
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+        return containsAny(
+                normalized,
+                "warning only",
+                "warnings only",
+                "warning events only",
+                "only warning events"
+        );
     }
 
     private boolean isHealthStatusIntent(String normalized) {
