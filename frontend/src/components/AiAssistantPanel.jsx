@@ -95,6 +95,16 @@ const assistantProfiles = {
         id: 'deployment',
         label: 'Primary issue',
         text: 'What is the primary failure and what should I fix first?'
+      },
+      {
+        id: 'pods',
+        label: 'Show Pods',
+        text: 'Show my pods.'
+      },
+      {
+        id: 'logs',
+        label: 'Pod Logs',
+        text: 'Show me the last 10 lines of logs.'
       }
     ]
   }

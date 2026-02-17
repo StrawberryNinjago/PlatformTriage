@@ -91,6 +91,31 @@ public class DeploymentDoctorService {
         }
     }
 
+    public String getPodLogs(
+            String namespace,
+            String podName,
+            Integer lineLimit
+    ) throws ApiException {
+        if (!StringUtils.hasText(namespace)) {
+            throw new IllegalArgumentException("Namespace is required to fetch pod logs.");
+        }
+        if (!StringUtils.hasText(podName)) {
+            throw new IllegalArgumentException("Pod name is required to fetch pod logs.");
+        }
+
+        int requestedLines = lineLimit == null ? 10 : lineLimit;
+        if (requestedLines <= 0) {
+            requestedLines = 10;
+        }
+        requestedLines = Math.min(requestedLines, 500);
+
+        return coreV1.readNamespacedPodLog(podName, namespace)
+                .timestamps(false)
+                .tailLines(requestedLines)
+                .pretty("false")
+                .execute();
+    }
+
     /**
      * Execute the actual query logic (extracted from getSummary for error
      * handling).

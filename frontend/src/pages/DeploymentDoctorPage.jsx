@@ -81,6 +81,36 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   const [activeScenario, setActiveScenario] = useState(null);
   const [isCustomMode, setIsCustomMode] = useState(false);
   const [currentAction, setCurrentAction] = useState(null);
+  const [lastToolResult, setLastToolResult] = useState(null);
+
+  const configFieldSx = {
+    '& .MuiInputBase-input': { fontSize: '1.24rem', fontWeight: 500 },
+    '& .MuiInputLabel-root': { fontSize: '1.12rem', fontWeight: 700 },
+    '& .MuiInputLabel-root.MuiInputLabel-shrink': { fontSize: '1rem', fontWeight: 700 },
+    '& .MuiFormHelperText-root': { fontSize: '1rem', fontWeight: 500 }
+  };
+
+  const isDeploymentSummaryPayload = (payload) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return false;
+    }
+    return Boolean(payload.target && payload.health && Array.isArray(payload.findings));
+  };
+
+  const isPodListPayload = (payload) => {
+    return Array.isArray(payload)
+      && payload.length >= 0
+      && payload.every(item => (
+        typeof item === 'object'
+        && item !== null
+        && typeof item.name === 'string'
+        && item.name.trim().length > 0
+      ));
+  };
+
+  const isPodLogPayload = (payload) => {
+    return Array.isArray(payload) && payload.length >= 0 && payload.every(item => typeof item === 'string');
+  };
 
   const loadDeploymentSummary = async (overrideParams = {}) => {
     // Use override params if provided, otherwise use state
@@ -104,6 +134,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
 
     setLoading(true);
     setError(null);
+    setLastToolResult(null);
     
     try {
       addConsoleMessage(`🔍 Loading deployment summary for namespace: ${effectiveNamespace}...`, 'info');
@@ -132,9 +163,21 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       setCurrentAction(actionName);
     }
 
-    if (payload && typeof payload === 'object') {
+    if (isDeploymentSummaryPayload(payload)) {
       setSummary(payload);
+      setLastToolResult(null);
+      return;
     }
+
+    if (payload == null) {
+      setLastToolResult(null);
+      return;
+    }
+
+    setLastToolResult({
+      action: actionName || 'assistant_tool',
+      payload
+    });
   };
 
   // ⭐ Handle demo scenario selection
@@ -142,6 +185,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     // Clear previous results
     setSummary(null);
     setError(null);
+    setLastToolResult(null);
     
     // Populate fields
     setNamespace(scenario.namespace);
@@ -215,7 +259,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
           bgcolor: config.color,
           color: 'white',
           fontWeight: 600,
-          fontSize: '0.75rem'
+          fontSize: '0.95rem'
         }}
       />
     );
@@ -235,6 +279,60 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       deploymentsReady: summary.health.deploymentsReady,
       pods: summary.health.pods
     };
+  };
+
+  const renderToolResultPanel = () => {
+    if (!lastToolResult) {
+      return null;
+    }
+
+        const { action, payload } = lastToolResult;
+        const isPodList = action === 'list_pods' || isPodListPayload(payload);
+        const isPodLog = action === 'pod_logs' || isPodLogPayload(payload);
+
+    return (
+      <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" sx={{ mb: 2 }}>
+          Assistant Tool Result: {action}
+        </Typography>
+
+        {isPodList && !isPodLog && (
+          <List dense>
+            {payload.length === 0 ? (
+              <ListItem>
+                <ListItemText primary="No pods returned." />
+              </ListItem>
+            ) : (
+              payload.map((pod) => (
+                <ListItem key={pod.name}>
+                  <ListItemText
+                    primary={pod.name}
+                    secondary={`phase=${pod.phase || 'unknown'} | ready=${pod.ready ? 'true' : 'false'} | restarts=${pod.restarts ?? 0}`}
+                  />
+                </ListItem>
+              ))
+            )}
+          </List>
+        )}
+
+        {isPodLog && !isPodList && (
+          <Box sx={{ maxHeight: 320, overflowY: 'auto', bgcolor: '#0f172a', color: '#f8fafc', p: 2, borderRadius: 1 }}>
+            <Typography variant="caption" color="#e2e8f0" sx={{ mb: 1, display: 'block' }}>
+              Last lines from pod logs
+            </Typography>
+            <Typography component="pre" variant="body2" sx={{ m: 0, whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}>
+              {payload.length > 0 ? payload.join('\\n') : 'No logs returned.'}
+            </Typography>
+          </Box>
+        )}
+
+        {!isPodList && !isPodLog && (
+          <Typography component="pre" sx={{ m: 0, whiteSpace: 'pre-wrap', fontSize: '0.95rem' }}>
+            {typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)}
+          </Typography>
+        )}
+      </Paper>
+    );
   };
 
   const handleEvidenceClick = (ref) => {
@@ -277,7 +375,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
           }}
         >
           Demo Scenarios
-          <Chip label="One-Click" size="small" color="primary" variant="outlined" sx={{ height: 18, fontSize: '0.7rem' }} />
+          <Chip label="One-Click" size="small" color="primary" variant="outlined" sx={{ height: 22, fontSize: '0.9rem' }} />
         </Typography>
         
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', mb: 3 }}>
@@ -289,7 +387,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                   <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
                     {scenario.description}
                   </Typography>
-                  <Typography variant="caption" sx={{ fontSize: '0.7rem', fontStyle: 'italic', opacity: 0.9 }}>
+                  <Typography variant="caption" sx={{ fontSize: '0.95rem', fontStyle: 'italic', opacity: 0.9 }}>
                     {scenario.tooltip}
                   </Typography>
                 </Box>
@@ -351,7 +449,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
         
         {/* Helper Text */}
         {activeScenario && (
-          <Alert severity="info" sx={{ mt: 2, py: 0.5 }}>
+          <Alert severity="info" sx={{ mt: 2, py: 0.75, '& .MuiAlert-message': { fontSize: '1.1rem', fontWeight: 600 } }}>
             Demo scenario loaded: <strong>
               {WORKLOAD_SCENARIOS.find(s => s.id === activeScenario)?.label || 
                GUARDRAIL_SCENARIOS.find(s => s.id === activeScenario)?.label}
@@ -372,6 +470,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             required
             helperText="Kubernetes namespace to monitor"
             disabled={!isCustomMode && activeScenario !== null}
+            sx={configFieldSx}
           />
         </Grid>
         <Grid item xs={12} md={3}>
@@ -384,6 +483,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             helperText="Filter by label (optional)"
             error={selector && !selector.includes('=')}
             disabled={!isCustomMode && activeScenario !== null}
+            sx={configFieldSx}
           />
         </Grid>
         <Grid item xs={12} md={3}>
@@ -395,6 +495,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             fullWidth
             helperText="Helm release name"
             disabled={!isCustomMode && activeScenario !== null}
+            sx={configFieldSx}
           />
         </Grid>
         <Grid item xs={12} md={2}>
@@ -404,6 +505,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             onClick={loadDeploymentSummary}
             disabled={loading || !namespace}
             startIcon={loading ? <CircularProgress size={20} /> : <RefreshIcon />}
+            sx={{ minHeight: 52, fontSize: '1.08rem', fontWeight: 800 }}
           >
             {loading ? 'Loading...' : 'Load'}
           </Button>
@@ -460,8 +562,20 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             height: { xs: 'auto', lg: 'calc(100vh - 250px)' },
             display: 'flex',
             flexDirection: 'column',
-            '& .MuiTypography-caption': { fontSize: '1rem' },
-            '& .MuiTableCell-root': { fontSize: '1.05rem' }
+            '& .MuiTypography-h5': { fontSize: '2.1rem', fontWeight: 800 },
+            '& .MuiTypography-h6': { fontSize: '1.6rem', fontWeight: 800 },
+            '& .MuiTypography-subtitle2': { fontSize: '1.2rem', fontWeight: 700 },
+            '& .MuiTypography-body1': { fontSize: '1.22rem', lineHeight: 1.55 },
+            '& .MuiTypography-body2': { fontSize: '1.12rem', lineHeight: 1.5 },
+            '& .MuiTypography-caption': { fontSize: '1.04rem', lineHeight: 1.45 },
+            '& .MuiTableCell-root': { fontSize: '1.05rem' },
+            '& .MuiButton-root': { fontSize: '1.08rem', fontWeight: 700 },
+            '& .MuiChip-label': { fontSize: '1rem', fontWeight: 700 },
+            '& .MuiInputBase-input': { fontSize: '1.22rem', fontWeight: 500 },
+            '& .MuiInputLabel-root': { fontSize: '1.12rem', fontWeight: 700 },
+            '& .MuiFormHelperText-root': { fontSize: '1rem', fontWeight: 500 },
+            '& .MuiAlert-message': { fontSize: '1.08rem', fontWeight: 600 },
+            '& .MuiAccordionSummary-content .MuiTypography-root': { fontSize: '1.12rem', fontWeight: 700 }
           }}
         >
           <Box sx={{ p: 3, flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -472,13 +586,13 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
             {renderConfigurationForm()}
 
             {error && (
-              <Alert severity="error" sx={{ mb: 2 }}>
+              <Alert severity="error" sx={{ mb: 2, '& .MuiAlert-message': { fontSize: '1.1rem', fontWeight: 600 } }}>
                 {error}
               </Alert>
             )}
 
             {!summary && !loading && !error && (
-              <Alert severity="info">
+              <Alert severity="info" sx={{ '& .MuiAlert-message': { fontSize: '1.1rem', fontWeight: 600 } }}>
                 Enter a namespace and click Load to fetch deployment information.
               </Alert>
             )}
@@ -493,6 +607,8 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                 </Box>
               </Box>
             )}
+
+            {!loading && renderToolResultPanel()}
 
             {summary && !loading && (
               <Box>
@@ -556,7 +672,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                           icon={overallChip.icon}
                           sx={{ 
                             fontWeight: 'bold', 
-                            fontSize: '1rem',
+                            fontSize: '1.1rem',
                             ...(overallChip.color === 'default' && {
                               border: '2px dashed',
                               backgroundColor: 'transparent'
@@ -572,7 +688,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                             sx={{ 
                               display: 'block', 
                               mt: 1, 
-                              fontSize: '0.75rem',
+                              fontSize: '0.95rem',
                               lineHeight: 1.3
                             }}
                           >
@@ -670,7 +786,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                   variant="overline" 
                   sx={{ 
                     fontWeight: 700, 
-                    fontSize: '0.85rem',
+                    fontSize: '1rem',
                     letterSpacing: '0.1em',
                     color: getSeverityColor(primaryFinding.severity) + '.dark'
                   }}
@@ -734,7 +850,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                               <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
                                 {ev.kind}:
                               </Box>{' '}
-                              <Box component="span" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                              <Box component="span" sx={{ fontFamily: 'monospace', fontSize: '1rem' }}>
                                 {ev.name}
                               </Box>
                               {ev.message && (
@@ -742,7 +858,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                                   ml: 2, 
                                   mt: 0.5, 
                                   color: 'text.secondary', 
-                                  fontSize: '0.85rem',
+                                  fontSize: '0.98rem',
                                   fontStyle: 'italic'
                                 }}>
                                   {ev.message}
@@ -847,8 +963,8 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                       size="small" 
                       sx={{ 
                         fontFamily: 'monospace', 
-                        height: '20px',
-                        fontSize: '0.7rem'
+                        height: '24px',
+                        fontSize: '0.9rem'
                       }} 
                     />
                     {/* ⭐ IMPROVEMENT 3: Owner badge on each finding */}
@@ -875,7 +991,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                       <List dense sx={{ pl: 1 }}>
                         {f.evidence.map((ev, evIdx) => (
                           <ListItem key={evIdx} sx={{ py: 0.25, pl: 0 }}>
-                            <Typography variant="body2" component="div" sx={{ fontSize: '0.875rem' }}>
+                            <Typography variant="body2" component="div" sx={{ fontSize: '1.02rem' }}>
                               <Box component="span" sx={{ color: 'primary.main', fontWeight: 600 }}>
                                 {ev.kind}:
                               </Box>{' '}
@@ -887,7 +1003,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                                   ml: 2, 
                                   mt: 0.25, 
                                   color: 'text.secondary', 
-                                  fontSize: '0.8rem',
+                                  fontSize: '0.95rem',
                                   fontStyle: 'italic'
                                 }}>
                                   {ev.message}
@@ -903,7 +1019,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                   {/* Legacy evidenceRefs support (for backward compatibility) */}
                   {!f.evidence && Array.isArray(f.evidenceRefs) && f.evidenceRefs.length > 0 && (
                     <Box sx={{ mt: 1 }}>
-                      <Typography variant="body2" sx={{ fontSize: '0.875rem', color: 'text.secondary' }}>
+                      <Typography variant="body2" sx={{ fontSize: '1.02rem', color: 'text.secondary' }}>
                         Evidence:{' '}
                         {f.evidenceRefs.map((ref, refIdx) => (
                           <span key={refIdx}>
@@ -912,7 +1028,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                               component="span"
                               sx={{
                                 fontFamily: 'monospace',
-                                fontSize: '0.875rem',
+                                fontSize: '1.02rem',
                                 color: 'primary.main',
                                 cursor: 'pointer',
                                 textDecoration: 'underline',
@@ -952,7 +1068,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
                             key={stepIdx} 
                             component="li" 
                             variant="body2"
-                            sx={{ mb: 0.5, fontSize: '0.875rem' }}
+                            sx={{ mb: 0.5, fontSize: '1.02rem' }}
                           >
                             {step}
                           </Typography>
@@ -1156,7 +1272,7 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
           )}
 
           {summary && !summary.objects?.deployments?.length && !summary.objects?.pods?.length && (
-            <Alert severity="info">
+            <Alert severity="info" sx={{ '& .MuiAlert-message': { fontSize: '1.1rem', fontWeight: 600 } }}>
               No deployments or pods found in namespace <strong>{namespace}</strong>. 
               {selector && ` with selector: ${selector}`}
               {release && ` for release: ${release}`}

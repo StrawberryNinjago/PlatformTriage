@@ -5,6 +5,7 @@ const SQL_API_BASE = 'http://localhost:8081/api/sql';
 const DEPLOYMENT_API_BASE = 'http://localhost:8081/api/deployment';
 const SMOKE_TEST_API_BASE = 'http://localhost:8081/api/smoke-tests';
 const AI_API_BASE = 'http://localhost:8081/api/ai';
+const DEPLOYMENT_AI_API_BASE = 'http://localhost:8082/api/ai';
 
 export const apiService = {
   // Connection
@@ -109,6 +110,8 @@ export const apiService = {
     axios.get(`${SMOKE_TEST_API_BASE}/export`, { params: { runId } }),
 
   // AI Triage Assistant
-  askTriageAssistant: (payload) =>
-    axios.post(`${AI_API_BASE}/triage`, payload)
+  askTriageAssistant: (payload) => {
+    const base = payload?.tool === 'deployment-doctor' ? DEPLOYMENT_AI_API_BASE : AI_API_BASE;
+    return axios.post(`${base}/triage`, payload);
+  }
 };
