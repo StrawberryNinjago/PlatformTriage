@@ -1,77 +1,75 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Button,
+  Collapse,
+  Divider,
   TextField,
-  Typography,
-  Divider
+  Typography
 } from '@mui/material';
 
 export default function ActionButtons({
   isConnected,
-  schema,
   onAction,
   currentAction
 }) {
   const [tableName, setTableName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  const handleTableNameChange = (e) => {
-    setTableName(e.target.value);
-  };
+  const handleAction = (actionName, requiresTable = false, customTableName = null) => {
+    const selectedTable = customTableName ?? tableName;
 
-  const handleAction = (actionName, requiresTable = false) => {
-    if (requiresTable && !tableName) {
-      alert('Please enter a table name');
+    if (requiresTable && !selectedTable) {
       return;
     }
-    
-    onAction(actionName, { tableName, searchQuery });
+
+    onAction(actionName, {
+      tableName: selectedTable,
+      searchQuery
+    });
   };
 
-  const getButtonStyle = (actionName) => {
-    // Highlight button only if it's the current action being displayed
+  const buttonStyle = (actionName) => {
     if (currentAction === actionName) {
       return {
-        boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.3)',
+        boxShadow: '0 0 0 3px rgba(25, 118, 210, 0.25)',
         borderWidth: '2px',
-        fontWeight: 'bold',
+        fontWeight: 700,
         transition: 'all 0.2s ease',
       };
     }
     return {};
   };
 
+  const noConnectionHint = useMemo(() => (
+    !isConnected ? 'Connect first to enable actions.' : null
+  ), [isConnected]);
+
   return (
-    <Box sx={{ p: 2 }}>
-      <Typography variant="h6" gutterBottom>
-        Actions
+    <Box sx={{ p: 1.5 }}>
+      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+        Common Actions
       </Typography>
 
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        {/* Section 1: General Database Actions */}
-        <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'text.secondary', fontSize: '0.85rem' }}>
-          📊 General Database
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.25 }}>
+        Use AI for natural language tasks, or tap these quick workflows.
+      </Typography>
+
+      {noConnectionHint && (
+        <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 1 }}>
+          {noConnectionHint}
         </Typography>
+      )}
 
-        <Button
-          variant={currentAction === 'verify-connection' ? 'contained' : 'outlined'}
-          onClick={() => handleAction('verify-connection')}
-          disabled={!isConnected}
-          fullWidth
-          size="small"
-          sx={getButtonStyle('verify-connection')}
-        >
-          Verify Connection
-        </Button>
-
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
         <Button
           variant={currentAction === 'flyway-health' ? 'contained' : 'outlined'}
           onClick={() => handleAction('flyway-health')}
           disabled={!isConnected}
           fullWidth
           size="small"
-          sx={getButtonStyle('flyway-health')}
+          sx={buttonStyle('flyway-health')}
         >
           Flyway Health
         </Button>
@@ -82,29 +80,26 @@ export default function ActionButtons({
           disabled={!isConnected}
           fullWidth
           size="small"
-          sx={getButtonStyle('list-tables')}
+          sx={buttonStyle('list-tables')}
         >
           List All Tables
         </Button>
 
-        <Divider sx={{ my: 2 }} />
-
-        {/* Section 2: Inspect Specific Table */}
-        <Typography variant="subtitle2" sx={{ mb: 0.5, color: 'primary.main', fontSize: '0.85rem', fontWeight: 'bold' }}>
-          🔬 Inspect Specific Table
-        </Typography>
-        <Typography variant="caption" sx={{ mb: 1, color: 'text.secondary', display: 'block' }}>
-          Enter the exact table name you want to inspect
-        </Typography>
+        <Divider sx={{ mt: 1, mb: 0.75 }}>
+          <Typography variant="caption" color="text.secondary">
+            Inspect a table
+          </Typography>
+        </Divider>
 
         <TextField
-          label="Enter exact table name"
+          label="Table name"
           value={tableName}
-          onChange={handleTableNameChange}
+          onChange={(e) => setTableName(e.target.value)}
           size="small"
           placeholder="e.g. cart_item"
           fullWidth
-          sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#e3f2fd' } }}
+          autoComplete="off"
+          sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#e8f0fe' } }}
         />
 
         <Button
@@ -113,55 +108,72 @@ export default function ActionButtons({
           disabled={!isConnected || !tableName}
           fullWidth
           size="small"
-          sx={getButtonStyle('table-details')}
+          sx={buttonStyle('table-details')}
         >
-          Show Table Details
+          Inspect Table
         </Button>
 
-        <Button
-          variant={currentAction === 'check-ownership' ? 'contained' : 'outlined'}
-          onClick={() => handleAction('check-ownership', true)}
-          disabled={!isConnected || !tableName}
-          fullWidth
-          size="small"
-          sx={getButtonStyle('check-ownership')}
-        >
-          Check Ownership & Grants
-        </Button>
-
-        <Divider sx={{ my: 2 }} />
-
-        {/* Section 3: Search for Tables */}
-        <Typography variant="subtitle2" sx={{ mb: 0.5, color: 'success.main', fontSize: '0.85rem', fontWeight: 'bold' }}>
-          🔍 Search for Tables
-        </Typography>
-        <Typography variant="caption" sx={{ mb: 1, color: 'text.secondary', display: 'block' }}>
-          Search for tables when you don't know the exact name
-        </Typography>
+        <Divider sx={{ mt: 1, mb: 0.75 }}>
+          <Typography variant="caption" color="text.secondary">
+            Search tables
+          </Typography>
+        </Divider>
 
         <TextField
-          label="Search tables (partial name)"
+          label="Search tables"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           size="small"
-          placeholder="e.g. cart (finds cart, cart_item, etc.)"
+          placeholder="e.g. cart (matches cart, cart_item, ...)"
           fullWidth
+          autoComplete="off"
           sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#e8f5e9' } }}
         />
 
         <Button
-          variant="contained"
-          color={currentAction === 'find-table' ? 'primary' : 'success'}
+          variant={currentAction === 'find-table' ? 'contained' : 'outlined'}
+          color="success"
           onClick={() => handleAction('find-table')}
           disabled={!isConnected || !searchQuery}
           fullWidth
           size="small"
-          sx={currentAction === 'find-table' ? getButtonStyle('find-table') : {}}
+          sx={buttonStyle('find-table')}
         >
           Search Tables
         </Button>
+
+        <Button
+          variant="text"
+          onClick={() => setShowAdvanced((prev) => !prev)}
+          size="small"
+          sx={{ mt: 0.25, alignSelf: 'flex-start' }}
+        >
+          {showAdvanced ? 'Hide advanced action' : 'Show advanced action'}
+        </Button>
+
+        <Collapse in={showAdvanced} unmountOnExit>
+          <Divider sx={{ my: 0.75 }} />
+
+          <Typography variant="subtitle2" color="primary.main" sx={{ mb: 1 }}>
+            Advanced
+          </Typography>
+
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+            Run this if you need grants checks after inspecting a table.
+          </Typography>
+
+          <Button
+            variant={currentAction === 'check-ownership' ? 'contained' : 'outlined'}
+            onClick={() => handleAction('check-ownership', true)}
+            disabled={!isConnected || !tableName}
+            fullWidth
+            size="small"
+            sx={buttonStyle('check-ownership')}
+          >
+            Check Ownership & Grants
+          </Button>
+        </Collapse>
       </Box>
     </Box>
   );
 }
-

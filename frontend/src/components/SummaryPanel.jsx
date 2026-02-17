@@ -9,8 +9,8 @@ export default function SummaryPanel({ connectionStatus, summaryData }) {
   };
 
   return (
-    <Paper sx={{ p: 2, mb: 2 }}>
-      <Typography variant="h6" gutterBottom>
+    <Paper sx={{ p: 2.5, mb: 2 }}>
+      <Typography variant="h4" sx={{ fontSize: '2.1rem', mb: 1, fontWeight: 900 }}>
         Summary
       </Typography>
 
@@ -18,14 +18,14 @@ export default function SummaryPanel({ connectionStatus, summaryData }) {
         <Chip
           label={`Connection: ${connectionStatus}`}
           color={connectionStatus === 'connected' ? 'success' : 'default'}
-          size="small"
+          sx={{ '& .MuiChip-label': { fontSize: '0.9rem', fontWeight: 600 } }}
         />
 
         {summaryData?.flyway && (
           <Chip
             label={`Flyway: ${summaryData.flyway.status || 'N/A'}`}
             color={getStatusColor(summaryData.flyway.status)}
-            size="small"
+            sx={{ '& .MuiChip-label': { fontSize: '0.9rem', fontWeight: 600 } }}
           />
         )}
 
@@ -33,17 +33,16 @@ export default function SummaryPanel({ connectionStatus, summaryData }) {
           <Chip
             label={`Privileges: ${summaryData.privileges.status || 'N/A'}`}
             color={getStatusColor(summaryData.privileges.status)}
-            size="small"
+            sx={{ '& .MuiChip-label': { fontSize: '0.9rem', fontWeight: 600 } }}
           />
         )}
       </Box>
 
       {connectionStatus === 'disconnected' && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+        <Typography variant="body1" color="text.secondary" sx={{ mt: 2, fontSize: '1.16rem', fontWeight: 600 }}>
           Ready. Enter connection info and click Connect.
         </Typography>
       )}
     </Paper>
   );
 }
-

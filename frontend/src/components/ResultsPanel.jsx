@@ -699,9 +699,20 @@ export default function ResultsPanel({ results, onClear, connectionId }) {
   const canShowTable = isTablesList || isTableSearch || isPrivileges || isIdentity || isFlywayHealth || isFlywayHistory || isConnection || isSummary || isTableDetails || isIndexesOnly;
 
   return (
-    <Paper sx={{ p: 2, mb: 2, display: 'flex', flexDirection: 'column' }}>
+    <Paper
+      sx={{
+        p: { xs: 1.75, md: 2.25 },
+        mb: 2,
+        display: 'flex',
+        flexDirection: 'column',
+        '& .MuiTypography-caption': { fontSize: '0.98rem' },
+        '& .MuiTypography-body2': { fontSize: '1.1rem' },
+        '& .MuiTableCell-root': { fontSize: '1.06rem', py: 1.15 },
+        '& .MuiChip-label': { fontSize: '0.92rem', fontWeight: 600 }
+      }}
+    >
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h6">
+        <Typography variant="h5" sx={{ fontSize: '1.45rem' }}>
           Results
         </Typography>
         <Box sx={{ display: 'flex', gap: 1 }}>
@@ -772,4 +783,3 @@ export default function ResultsPanel({ results, onClear, connectionId }) {
     </Paper>
   );
 }
-

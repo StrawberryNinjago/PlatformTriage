@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Container, Grid, Paper, Box, Tabs, Tab } from '@mui/material';
+import { Container, Paper, Box, Tabs, Tab } from '@mui/material';
 import ConnectionForm from '../components/ConnectionForm';
-import ActionButtons from '../components/ActionButtons';
 import SummaryPanel from '../components/SummaryPanel';
 import ResultsPanel from '../components/ResultsPanel';
 import SqlSandboxPanel from '../components/SqlSandboxPanel';
 import EnvironmentComparisonPanel from '../components/EnvironmentComparisonPanel';
+import AiAssistantPanel from '../components/AiAssistantPanel';
 import { apiService } from '../services/apiService';
 
 function DBDoctorPage({ 
@@ -15,9 +15,17 @@ function DBDoctorPage({
   setConnectionStatus,
   addConsoleMessage 
 }) {
+  const [connectionForm, setConnectionForm] = useState({
+    host: 'localhost',
+    port: 5432,
+    database: 'cartdb',
+    username: 'cart_user',
+    password: '',
+    sslMode: 'disable',
+    schema: 'public'
+  });
   const [summaryData, setSummaryData] = useState(null);
   const [results, setResults] = useState(null);
-  const [schema, setSchema] = useState('public');
   const [currentAction, setCurrentAction] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [sourceConnectionDetails, setSourceConnectionDetails] = useState(null);
@@ -28,7 +36,6 @@ function DBDoctorPage({
       const connId = response.data.connectionId;
       setConnectionId(connId);
       setConnectionStatus('connected');
-      setSchema(formData.schema || 'public');
       addConsoleMessage('✓ Connected successfully', 'success');
       setResults(response.data);
       setCurrentAction('connect');
@@ -53,6 +60,19 @@ function DBDoctorPage({
     }
   };
 
+  const handleApplyConnection = (preset, connectNow = false) => {
+    const nextForm = { ...connectionForm };
+    Object.entries(preset || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        nextForm[key] = value;
+      }
+    });
+    setConnectionForm(nextForm);
+    if (connectNow) {
+      handleConnect(nextForm);
+    }
+  };
+
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
   };
@@ -71,59 +91,20 @@ function DBDoctorPage({
     }
   };
 
-  const handleAction = async (actionName, params) => {
-    if (!connectionId) {
-      addConsoleMessage('✗ Not connected. Please connect first.', 'error');
-      return;
+  const handleAiActionResult = (actionName, payload) => {
+    if (actionName) {
+      setCurrentAction(actionName);
     }
 
-    try {
-      let response;
-      switch (actionName) {
-        case 'verify-connection':
-          response = await apiService.getIdentity(connectionId);
-          addConsoleMessage('✓ Identity verified', 'success');
-          break;
+    if (payload && typeof payload === 'object') {
+      setResults(payload);
 
-        case 'flyway-health':
-          response = await apiService.getFlywayHealth(connectionId);
-          setSummaryData(prev => ({ ...prev, flyway: response.data }));
-          addConsoleMessage(`✓ Flyway health: ${response.data.status}`,
-            response.data.status === 'HEALTHY' ? 'success' : 'warning');
-          break;
-
-        case 'list-tables':
-          response = await apiService.getTables(connectionId, schema);
-          addConsoleMessage(`✓ Found ${response.data.tables.length} tables`, 'success');
-          break;
-
-        case 'find-table':
-          response = await apiService.searchTables(connectionId, schema, params.searchQuery);
-          addConsoleMessage(`✓ Found ${response.data.tables?.length || 0} matching tables`, 'success');
-          break;
-
-        case 'check-ownership':
-          response = await apiService.getPrivileges(connectionId, schema, params.tableName);
-          setSummaryData(prev => ({ ...prev, privileges: response.data }));
-          addConsoleMessage(`✓ Privileges checked: ${response.data.status}`,
-            response.data.status === 'PASS' ? 'success' : 'warning');
-          break;
-
-        case 'table-details':
-          response = await apiService.getTableIntrospect(connectionId, schema, params.tableName);
-          addConsoleMessage(`✓ Table details retrieved for ${params.tableName}`, 'success');
-          break;
-
-        default:
-          addConsoleMessage(`Unknown action: ${actionName}`, 'error');
-          return;
+      if (actionName === 'flyway_health') {
+        setSummaryData(prev => ({
+          ...prev,
+          flyway: payload
+        }));
       }
-
-      setResults(response.data);
-      setCurrentAction(actionName);
-    } catch (error) {
-      const errorMsg = error.response?.data?.message || error.message;
-      addConsoleMessage(`✗ ${actionName} failed: ${errorMsg}`, 'error');
     }
   };
 
@@ -196,81 +177,122 @@ function DBDoctorPage({
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 3, pb: 3 }}>
-      <Grid container spacing={3} sx={{ flexWrap: 'nowrap' }}>
-        {/* Left Panel - Fixed Width */}
-        <Grid item sx={{ width: '33.33%', minWidth: '33.33%', maxWidth: '33.33%' }}>
-          <Paper elevation={2}>
+    <Container
+      maxWidth={false}
+      sx={{
+        mt: 3,
+        pb: 3,
+        width: '100%',
+        px: { xs: 2, sm: 2.5, md: 3 }
+      }}
+    >
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            lg: 'minmax(540px, 1.2fr) minmax(0, 1.8fr)'
+          },
+          minHeight: { xs: 'auto', lg: 'calc(100vh - 250px)' },
+          width: '100%',
+          gap: 2,
+          alignItems: 'stretch',
+          minWidth: 0
+        }}
+      >
+        {/* Left Rail - LLM */}
+        <Box sx={{ position: { lg: 'sticky' }, top: { lg: 16 }, minWidth: 0, alignSelf: 'stretch' }}>
+          <AiAssistantPanel
+            tool="db-doctor"
+            connectionId={connectionId}
+            currentAction={currentAction}
+            context={results}
+            onApplyConnection={handleApplyConnection}
+            onToolResult={handleAiActionResult}
+          />
+        </Box>
+
+        {/* Right Rail - Diagnostics */}
+        <Paper
+          elevation={2}
+          sx={{
+            minWidth: 0,
+            minHeight: 0,
+            '& .MuiTypography-caption': { fontSize: '1rem' },
+            '& .MuiTableCell-root': { fontSize: '1.05rem' }
+          }}
+        >
+          <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#fafcff' }}>
             <ConnectionForm
+              formData={connectionForm}
+              setFormData={setConnectionForm}
               onConnect={handleConnect}
               onLoadSummary={handleLoadSummary}
               isConnected={connectionStatus === 'connected'}
             />
-          </Paper>
+          </Box>
 
-          <Paper elevation={2} sx={{ mt: 2, maxHeight: '400px', overflow: 'auto' }}>
-            <ActionButtons
-              isConnected={connectionStatus === 'connected'}
-              schema={schema}
-              onAction={handleAction}
-              currentAction={currentAction}
-            />
-          </Paper>
-        </Grid>
+          <Tabs 
+            value={activeTab} 
+            onChange={handleTabChange}
+            sx={{
+              borderBottom: 1,
+              borderColor: 'divider',
+              '& .MuiTab-root': {
+                fontSize: '1.24rem',
+                textTransform: 'none',
+                fontWeight: 800,
+                minHeight: 56,
+                color: 'text.secondary'
+              },
+              '& .MuiTab-root.Mui-selected': {
+                color: 'text.primary'
+              }
+            }}
+          >
+            <Tab label="Single Environment" />
+            <Tab label="Compare Environments" />
+          </Tabs>
 
-        {/* Right Panel - Fluid Content */}
-        <Grid item sx={{ width: '66.67%', minWidth: '66.67%', maxWidth: '66.67%' }}>
-          <Paper elevation={2}>
-            <Tabs 
-              value={activeTab} 
-              onChange={handleTabChange}
-              sx={{ borderBottom: 1, borderColor: 'divider' }}
-            >
-              <Tab label="Single Environment" />
-              <Tab label="Compare Environments" />
-            </Tabs>
-
-            <Box sx={{ p: 3 }}>
-              {/* Tab 1: Single Environment */}
-              {activeTab === 0 && (
-                <Box>
-                  <SummaryPanel
-                    connectionStatus={connectionStatus}
-                    summaryData={summaryData}
-                  />
-
-                  <SqlSandboxPanel
-                    isConnected={connectionStatus === 'connected'}
-                    connectionId={connectionId}
-                    onAnalyze={handleAnalyzeSql}
-                  />
-
-                  <Box sx={{ mt: 2 }}>
-                    <ResultsPanel
-                      results={results}
-                      onClear={() => setResults(null)}
-                      connectionId={connectionId}
-                    />
-                  </Box>
-                </Box>
-              )}
-
-              {/* Tab 2: Compare Environments */}
-              {activeTab === 1 && (
-                <EnvironmentComparisonPanel
-                  isConnected={connectionStatus === 'connected'}
-                  currentConnectionId={connectionId}
-                  sourceConnectionDetails={sourceConnectionDetails}
-                  onCompare={handleCompareEnvironments}
+          <Box sx={{ p: 3 }}>
+            {/* Tab 1: Single Environment */}
+            {activeTab === 0 && (
+              <Box>
+                <SummaryPanel
+                  connectionStatus={connectionStatus}
+                  summaryData={summaryData}
                 />
-              )}
-            </Box>
-          </Paper>
-        </Grid>
-      </Grid>
+
+                <SqlSandboxPanel
+                  isConnected={connectionStatus === 'connected'}
+                  connectionId={connectionId}
+                  onAnalyze={handleAnalyzeSql}
+                />
+
+                <Box sx={{ mt: 2 }}>
+                  <ResultsPanel
+                    results={results}
+                    onClear={() => setResults(null)}
+                    connectionId={connectionId}
+                  />
+                </Box>
+              </Box>
+            )}
+
+            {/* Tab 2: Compare Environments */}
+            {activeTab === 1 && (
+              <EnvironmentComparisonPanel
+                isConnected={connectionStatus === 'connected'}
+                currentConnectionId={connectionId}
+                sourceConnectionDetails={sourceConnectionDetails}
+                onCompare={handleCompareEnvironments}
+              />
+            )}
+          </Box>
+        </Paper>
+      </Box>
     </Container>
   );
 }
 
 export default DBDoctorPage;
-

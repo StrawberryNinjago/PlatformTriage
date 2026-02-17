@@ -198,11 +198,31 @@ export default function FlywayHealthPanel({ data, connectionId }) {
   const hasDrift = warnings.some(w => w.code === 'CREDENTIAL_DRIFT' || w.code === 'MULTIPLE_INSTALLERS');
 
   return (
-    <Box sx={{ width: '100%' }}>
+    <Box
+      sx={{
+        width: '100%',
+        '& .MuiTypography-caption': { fontSize: '1rem' },
+        '& .MuiTypography-body2': { fontSize: '1.1rem' },
+        '& .MuiTypography-subtitle2': { fontSize: '1.14rem' },
+        '& .MuiTableCell-root': { fontSize: '1.06rem' },
+        '& .MuiChip-label': { fontSize: '0.95rem', fontWeight: 700 },
+        '& .MuiButton-root': { fontSize: '1rem', fontWeight: 700 }
+      }}
+    >
       {/* Warning Banner */}
       {hasWarnings && (
-        <Alert severity="warning" sx={{ mb: 2 }} icon={<WarningIcon />}>
-          <AlertTitle>Credential Drift Detected</AlertTitle>
+        <Alert
+          severity="warning"
+          sx={{
+            mb: 2,
+            '& .MuiAlert-message': { width: '100%' },
+            '& .MuiAlert-icon': { fontSize: '1.5rem' }
+          }}
+          icon={<WarningIcon />}
+        >
+          <AlertTitle sx={{ fontSize: '1.25rem', fontWeight: 800 }}>
+            Credential Drift Detected
+          </AlertTitle>
           {warnings.map((warning, idx) => (
             <Typography key={idx} variant="body2">
               <strong>[{warning.code}]</strong> {warning.message}
@@ -216,12 +236,15 @@ export default function FlywayHealthPanel({ data, connectionId }) {
 
       {/* Top-Level Compact Header */}
       <Paper elevation={2} sx={{ p: 2, mb: 2, bgcolor: hasDrift ? '#fff3e0' : 'background.paper' }}>
-        <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Typography
+          variant="h5"
+          sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1, fontWeight: 800, fontSize: { xs: '1.6rem', md: '1.9rem' } }}
+        >
           🛫 Flyway Health
           <Chip
             label={status}
             color={getStatusColor(status)}
-            size="small"
+            size="medium"
           />
         </Typography>
 
@@ -234,43 +257,43 @@ export default function FlywayHealthPanel({ data, connectionId }) {
         }}>
           {/* 1. Status & Message */}
           <Box>
-            <Typography variant="caption" color="text.secondary" display="block">
+            <Typography variant="body2" color="text.secondary" display="block" sx={{ fontWeight: 700 }}>
               Status
             </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+            <Typography variant="body1" sx={{ fontWeight: 600, fontSize: '1.18rem' }}>
               {message}
             </Typography>
           </Box>
 
           {/* 2. Connected As */}
           <Box>
-            <Typography variant="caption" color="text.secondary" display="block">
+            <Typography variant="body2" color="text.secondary" display="block" sx={{ fontWeight: 700 }}>
               Connected As
             </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
+            <Typography variant="body1" sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: '1.2rem' }}>
               {identity?.currentUser || 'N/A'}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography variant="body2" color="text.secondary">
               {identity?.database}@{identity?.serverAddr}:{identity?.serverPort}
             </Typography>
           </Box>
 
           {/* 3. Last Migration */}
           <Box>
-            <Typography variant="caption" color="text.secondary" display="block">
+            <Typography variant="body2" color="text.secondary" display="block" sx={{ fontWeight: 700 }}>
               Last Migration
             </Typography>
             {latestApplied ? (
               <>
-                <Typography variant="body2" sx={{ fontWeight: 'medium' }}>
+                <Typography variant="body1" sx={{ fontWeight: 600, fontSize: '1.18rem' }}>
                   {latestApplied.version} - {latestApplied.description}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="body2" color="text.secondary">
                   {formatRelativeTime(latestApplied.installedOn)} by {latestApplied.installedBy}
                 </Typography>
               </>
             ) : (
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant="body1" color="text.secondary">
                 {flywaySummary?.historyTableExists ? 'No migrations found' : 'N/A'}
               </Typography>
             )}
@@ -279,13 +302,13 @@ export default function FlywayHealthPanel({ data, connectionId }) {
           {/* 4. Failed Migrations (if any) */}
           {flywaySummary?.failedCount > 0 && (
             <Box>
-              <Typography variant="caption" color="text.secondary" display="block">
+              <Typography variant="body2" color="text.secondary" display="block" sx={{ fontWeight: 700 }}>
                 Failed Migrations
               </Typography>
               <Chip
                 label={`${flywaySummary.failedCount} Failed`}
                 color="error"
-                size="small"
+                size="medium"
               />
             </Box>
           )}
@@ -293,12 +316,12 @@ export default function FlywayHealthPanel({ data, connectionId }) {
 
         {/* Quick Actions Row */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 1 }}>
-          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 'bold' }}>
+          <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 800, fontSize: '1.08rem' }}>
             Quick Actions
           </Typography>
           <Box sx={{ display: 'flex', gap: 1 }}>
             <Button
-              size="small"
+              size="medium"
               startIcon={<ContentCopyIcon />}
               onClick={handleCopyDiagnostics}
               variant={copySuccess ? 'contained' : 'outlined'}
@@ -307,7 +330,7 @@ export default function FlywayHealthPanel({ data, connectionId }) {
               {copySuccess ? 'Copied!' : 'Copy Diagnostics'}
             </Button>
             <Button
-              size="small"
+              size="medium"
               startIcon={<DownloadIcon />}
               onClick={handleExportDiagnostics}
               variant={exportSuccess ? 'contained' : 'outlined'}
@@ -688,4 +711,3 @@ export default function FlywayHealthPanel({ data, connectionId }) {
     </Box>
   );
 }
-
