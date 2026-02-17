@@ -43,6 +43,7 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
   const [copySuccess, setCopySuccess] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const [expandedSections, setExpandedSections] = useState({
+    columns: true,
     indexes: false,
     constraints: false,
     ownership: false
@@ -51,6 +52,7 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
 
   // Refs for scrolling to sections
   const ownershipRef = useRef(null);
+  const columnsRef = useRef(null);
   const indexesRef = useRef(null);
   const constraintsRef = useRef(null);
   const pkRef = useRef(null);
@@ -58,7 +60,7 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
 
   if (!data) return null;
 
-  const { table, owner, currentUser, indexes = [], constraints = [], flywayInfo } = data;
+  const { table, owner, currentUser, columns = [], indexes = [], constraints = [], flywayInfo } = data;
   
   // Categorize constraints
   const primaryKeys = constraints.filter(c => c.type === 'PRIMARY KEY');
@@ -73,6 +75,9 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
   const primaryIndexes = indexes.filter(i => i.primary);
   const uniqueIndexes = indexes.filter(i => i.unique && !i.primary);
   const regularIndexes = indexes.filter(i => !i.unique && !i.primary);
+  const requiredColumns = columns.filter(c => !c.nullable && !c.columnDefault);
+  const nullableColumns = columns.filter(c => c.nullable);
+  const defaultedColumns = columns.filter(c => c.columnDefault);
 
   // Analyze FK cascades
   const cascadingFKs = foreignKeys.filter(fk => 
@@ -304,6 +309,19 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
       lines.push('');
     }
 
+    lines.push('─── COLUMNS ───');
+    lines.push(`Total: ${columns.length}`);
+    lines.push(`Required (NOT NULL w/o default): ${requiredColumns.length}`);
+    lines.push(`Nullable: ${nullableColumns.length}`);
+    lines.push(`With defaults: ${defaultedColumns.length}`);
+    if (columns.length > 0) {
+      lines.push('Column details:');
+      columns.forEach((col) => {
+        lines.push(`  - ${col.ordinalPosition}. ${col.name} (${col.dataType}) ${col.nullable ? 'NULL' : 'NOT NULL'}${col.columnDefault ? ` DEFAULT ${col.columnDefault}` : ''}`);
+      });
+    }
+    lines.push('');
+
     lines.push('─── INDEXES ───');
     lines.push(`Total: ${indexes.length}`);
     lines.push(`Primary: ${primaryIndexes.length}, Unique: ${uniqueIndexes.length}, Regular: ${regularIndexes.length}`);
@@ -451,6 +469,13 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
         </Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
           {/* Constraint-related diagnostics */}
+          <DiagnosticPill
+            icon={<InfoIcon fontSize="small" />}
+            label={`${columns.length} Column${columns.length !== 1 ? 's' : ''}`}
+            status="info"
+            onClick={() => scrollToSection(columnsRef, 'columns')}
+          />
+
           <DiagnosticPill
             icon={pkIntegrityOk ? <CheckCircleIcon fontSize="small" /> : <WarningIcon fontSize="small" />}
             label={pkIntegrityOk ? 'PK Integrity OK' : 'No Primary Key'}
@@ -799,6 +824,86 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
           </Box>
         </Paper>
       )}
+
+      {/* Columns Section */}
+      <Paper elevation={1} sx={{ mb: 3 }} ref={columnsRef}>
+        <Box
+          sx={{
+            p: 2,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            cursor: 'pointer',
+            bgcolor: '#f5f5f5',
+            '&:hover': { bgcolor: '#eeeeee' }
+          }}
+          onClick={() => toggleSection('columns')}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
+              🧱 Columns
+            </Typography>
+            <Chip label={`${columns.length} total`} size="small" color="info" />
+          </Box>
+          <IconButton
+            size="small"
+            sx={{
+              transform: expandedSections.columns ? 'rotate(180deg)' : 'rotate(0deg)',
+              transition: 'transform 0.3s'
+            }}
+          >
+            <ExpandMoreIcon />
+          </IconButton>
+        </Box>
+        <Collapse in={expandedSections.columns}>
+          <Divider />
+          <Box sx={{ p: 2 }}>
+            {columns.length > 0 ? (
+              <Box>
+                <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  <Chip label={`${requiredColumns.length} required`} size="small" color="warning" />
+                  <Chip label={`${nullableColumns.length} nullable`} size="small" color="default" />
+                  <Chip label={`${defaultedColumns.length} with default`} size="small" color="success" />
+                </Box>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ backgroundColor: '#f5f5f5' }}>
+                        <TableCell><strong>#</strong></TableCell>
+                        <TableCell><strong>Name</strong></TableCell>
+                        <TableCell><strong>Type</strong></TableCell>
+                        <TableCell><strong>Nullable</strong></TableCell>
+                        <TableCell><strong>Default</strong></TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {columns.map((col) => (
+                        <TableRow key={col.name} hover>
+                          <TableCell>{col.ordinalPosition}</TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>{col.name}</TableCell>
+                          <TableCell>{col.dataType || '-'}</TableCell>
+                          <TableCell>
+                            <Chip
+                              label={col.nullable ? 'YES' : 'NO'}
+                              color={col.nullable ? 'default' : 'warning'}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                            {col.columnDefault || '-'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </Box>
+            ) : (
+              <Typography variant="body2" color="text.secondary">No column metadata found</Typography>
+            )}
+          </Box>
+        </Collapse>
+      </Paper>
 
       {/* Indexes Section */}
       <Paper elevation={1} sx={{ mb: 3 }} ref={indexesRef}>
@@ -1197,4 +1302,3 @@ export default function TableDiagnosticsPanel({ data, connectionId, schema }) {
     </Box>
   );
 }
-

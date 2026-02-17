@@ -3,6 +3,7 @@ package com.example.Triage.service.db;
 import com.example.Triage.dao.DbQueries;
 import com.example.Triage.model.dto.DbConnectContextDto;
 import com.example.Triage.model.dto.DbConstraint;
+import com.example.Triage.model.dto.DbTableColumn;
 import com.example.Triage.model.response.DbConstraintsResponse;
 import com.example.Triage.model.response.DbTableIntrospectResponse;
 import lombok.RequiredArgsConstructor;
@@ -38,13 +39,43 @@ public class DbIntrospectService {
             throws SQLException {
         DataSource ds = dataSourceFactory.build(ctx);
         try (var conn = ds.getConnection()) {
+            var columns = queryColumns(conn, schema, table);
             var indexes = indexService.listIndexes(ctx, schema, table).indexes();
             var constraints = queryConstraints(conn, schema, table);
             var owner = queryTableOwner(conn, schema, table);
             var currentUser = queryCurrentUser(conn);
             var flywayInfo = queryFlywayInfoForTable(conn, schema, table);
-            return new DbTableIntrospectResponse(schema, table, owner, currentUser, indexes, constraints, flywayInfo);
+            return new DbTableIntrospectResponse(schema, table, owner, currentUser, columns, indexes, constraints, flywayInfo);
         }
+    }
+
+    private List<DbTableColumn> queryColumns(Connection conn, String schema, String table)
+            throws SQLException {
+        String sql = """
+                SELECT column_name, ordinal_position, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = ? AND table_name = ?
+                ORDER BY ordinal_position
+                """;
+
+        List<DbTableColumn> out = new ArrayList<>();
+        try (var ps = conn.prepareStatement(sql)) {
+            ps.setString(1, schema);
+            ps.setString(2, table);
+            try (var rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new DbTableColumn(
+                            rs.getString("column_name"),
+                            rs.getInt("ordinal_position"),
+                            rs.getString("data_type"),
+                            "YES".equalsIgnoreCase(rs.getString("is_nullable")),
+                            rs.getString("column_default")
+                    ));
+                }
+            }
+        }
+
+        return out;
     }
 
     private List<DbConstraint> queryConstraints(Connection conn, String schema, String table)

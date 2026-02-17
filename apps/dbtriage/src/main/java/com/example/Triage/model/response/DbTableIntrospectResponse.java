@@ -4,6 +4,7 @@ import java.util.List;
 
 import com.example.Triage.model.dto.DbConstraint;
 import com.example.Triage.model.dto.DbIndex;
+import com.example.Triage.model.dto.DbTableColumn;
 
 import lombok.Builder;
 
@@ -13,6 +14,7 @@ public record DbTableIntrospectResponse(
                 String table,
                 String owner,
                 String currentUser,
+                List<DbTableColumn> columns,
                 List<DbIndex> indexes,
                 List<DbConstraint> constraints,
                 FlywayMigrationInfo flywayInfo) {
