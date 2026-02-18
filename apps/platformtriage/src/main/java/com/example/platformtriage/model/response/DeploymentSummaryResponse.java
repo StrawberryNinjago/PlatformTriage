@@ -35,5 +35,6 @@ public record DeploymentSummaryResponse(
     Finding primaryFailure,  // Set ONLY when overall == FAIL or UNKNOWN; null otherwise
     Finding topWarning,      // Highest priority WARN-severity finding; null if no warnings
     PrimaryFailureDebug primaryFailureDebug,  // Debug metadata (why this was chosen)
+    DeploymentVersionCheck versionCheck,
     Objects objects
 ) {}

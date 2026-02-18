@@ -1,5 +1,10 @@
 package com.example.platformtriage.service;
 
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -9,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -28,6 +34,9 @@ import com.example.platformtriage.model.enums.FailureCode;
 import com.example.platformtriage.model.enums.OverallStatus;
 import com.example.platformtriage.model.enums.Severity;
 import com.example.platformtriage.model.response.DeploymentSummaryResponse;
+import com.example.platformtriage.model.response.DeploymentTraceMatch;
+import com.example.platformtriage.model.response.DeploymentTraceSearchResponse;
+import com.example.platformtriage.model.response.DeploymentVersionCheck;
 
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.ApiException;
@@ -37,6 +46,8 @@ import io.kubernetes.client.openapi.models.CoreV1Event;
 import io.kubernetes.client.openapi.models.CoreV1EventList;
 import io.kubernetes.client.openapi.models.V1ContainerState;
 import io.kubernetes.client.openapi.models.V1ContainerStatus;
+import io.kubernetes.client.openapi.models.V1EnvVar;
+import io.kubernetes.client.openapi.models.V1Secret;
 import io.kubernetes.client.openapi.models.V1Deployment;
 import io.kubernetes.client.openapi.models.V1DeploymentCondition;
 import io.kubernetes.client.openapi.models.V1DeploymentList;
@@ -54,7 +65,43 @@ import io.kubernetes.client.openapi.models.V1ServicePort;
 public class DeploymentDoctorService {
 
     // Cap number of events per involved object (prevents a single pod from dominating output)
-    private final int PER_OBJECT_CAP = 3; // cart-app would become up to 3 × pods total events.
+    private static final int TRACE_SEARCH_MIN_LINES = 500;
+
+    private static final List<String> DB_URL_KEYS = List.of(
+            "SPRING_DATASOURCE_URL",
+            "DATABASE_URL",
+            "JDBC_DATABASE_URL",
+            "POSTGRES_URL"
+    );
+    private static final List<String> DB_HOST_KEYS = List.of(
+            "SPRING_DATASOURCE_HOST",
+            "DB_HOST",
+            "POSTGRES_HOST"
+    );
+    private static final List<String> DB_PORT_KEYS = List.of(
+            "SPRING_DATASOURCE_PORT",
+            "DB_PORT",
+            "POSTGRES_PORT"
+    );
+    private static final List<String> DB_NAME_KEYS = List.of(
+            "SPRING_DATASOURCE_NAME",
+            "DB_NAME",
+            "POSTGRES_DB"
+    );
+    private static final List<String> DB_USER_KEYS = List.of(
+            "SPRING_DATASOURCE_USERNAME",
+            "DB_USERNAME",
+            "POSTGRES_USER",
+            "SPRING_DATASOURCE_USERNAME",
+            "DB_USER",
+            "DATABASE_USER"
+    );
+    private static final List<String> DB_PASSWORD_KEYS = List.of(
+            "SPRING_DATASOURCE_PASSWORD",
+            "DB_PASSWORD",
+            "POSTGRES_PASSWORD",
+            "DATABASE_PASSWORD"
+    );
 
     private final CoreV1Api coreV1;
     private final AppsV1Api appsV1;
@@ -107,13 +154,91 @@ public class DeploymentDoctorService {
         if (requestedLines <= 0) {
             requestedLines = 10;
         }
-        requestedLines = Math.min(requestedLines, 500);
+        requestedLines = Math.min(requestedLines, 1000);
 
         return coreV1.readNamespacedPodLog(podName, namespace)
                 .timestamps(false)
                 .tailLines(requestedLines)
                 .pretty("false")
                 .execute();
+    }
+
+    public DeploymentVersionCheck getVersionCheck(
+            String namespace,
+            String selector,
+            String release
+    ) throws ApiException {
+        String effectiveSelector = buildEffectiveSelector(selector, release);
+        List<V1Pod> pods = listPodsOrThrow(namespace, effectiveSelector);
+        return detectVersionChecks(namespace, selector, release, pods);
+    }
+
+    public DeploymentTraceSearchResponse findTraceInLogs(
+            String namespace,
+            String selector,
+            String release,
+            String podName,
+            String traceId,
+            Integer lineLimit
+    ) throws ApiException {
+        if (!StringUtils.hasText(namespace)) {
+            throw new IllegalArgumentException("Namespace is required to search logs.");
+        }
+        if (!StringUtils.hasText(traceId)) {
+            throw new IllegalArgumentException("traceId is required for log trace search.");
+        }
+
+        String effectiveSelector = buildEffectiveSelector(selector, release);
+        List<V1Pod> pods = listPodsOrThrow(namespace, effectiveSelector);
+        if (pods.isEmpty()) {
+            return new DeploymentTraceSearchResponse(namespace, traceId, List.of(), 0, 0);
+        }
+
+        int requestedLines = lineLimit == null ? TRACE_SEARCH_MIN_LINES : lineLimit;
+        if (requestedLines <= 0) {
+            requestedLines = TRACE_SEARCH_MIN_LINES;
+        }
+        requestedLines = Math.min(requestedLines, 1000);
+
+        List<V1Pod> targetPods = filterPodsByName(pods, podName);
+        if (targetPods.isEmpty() && StringUtils.hasText(podName)) {
+            throw new IllegalArgumentException("Pod '" + podName + "' was not found in the current scope.");
+        }
+
+        final int safeLineLimit = requestedLines;
+        List<DeploymentTraceMatch> matches = targetPods.stream()
+                .map(pod -> {
+                    String name = pod.getMetadata() != null ? pod.getMetadata().getName() : null;
+                    if (!StringUtils.hasText(name)) {
+                        return null;
+                    }
+                    try {
+                        List<String> matchedLines = getPodLogs(namespace, name, safeLineLimit)
+                                .lines()
+                                .filter(line -> line.contains(traceId))
+                                .toList();
+                        if (matchedLines.isEmpty()) {
+                            return null;
+                        }
+                        return new DeploymentTraceMatch(name, matchedLines);
+                    } catch (Exception e) {
+                        return null;
+                    }
+                })
+                .filter(match -> match != null)
+                .toList();
+
+        int totalMatches = matches.stream()
+                .mapToInt(m -> m.lines() == null ? 0 : m.lines().size())
+                .sum();
+
+        return new DeploymentTraceSearchResponse(
+                namespace,
+                traceId,
+                matches,
+                targetPods.size(),
+                totalMatches
+        );
     }
 
     /**
@@ -131,6 +256,7 @@ public class DeploymentDoctorService {
         // Core objects
         List<V1Pod> pods = listPodsOrThrow(namespace, effectiveSelector);
         Map<String, V1Deployment> deployments = listDeploymentsBySelector(namespace, effectiveSelector);
+        DeploymentVersionCheck versionCheck = detectVersionChecks(namespace, effectiveSelector, release, pods);
 
         // ==================== FIX 3: UNKNOWN SHORT-CIRCUIT ====================
         // If no pods AND no deployments, return UNKNOWN immediately
@@ -161,6 +287,7 @@ public class DeploymentDoctorService {
                     noMatchingObjectsFinding, // primaryFailure is set for UNKNOWN
                     null, // topWarning: N/A when no objects found
                     null, // primaryFailureDebug: N/A for short-circuit (not ranked)
+                    versionCheck,
                     new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
             );
         }
@@ -329,9 +456,283 @@ public class DeploymentDoctorService {
                 primaryFailure, // The highest-priority finding for primary decision
                 topWarning, // The highest-priority warning-level finding
                 null, // TODO: Add primaryFailureDebug from ranker
+                versionCheck,
                 new Objects(workloadInfos, podInfos, relatedEvents, serviceInfos, endpointsInfos)
         );
     }
+
+    private DeploymentVersionCheck detectVersionChecks(
+            String namespace,
+            String selector,
+            String release,
+            List<V1Pod> pods
+    ) {
+        List<String> dockerImages = collectDockerImages(pods);
+        String dbSourceLabel = "Not available from inspected pod spec";
+
+        DatabaseConnectionProfile profile = resolveDatabaseProfile(pods, namespace);
+        if (profile == null) {
+            return new DeploymentVersionCheck(
+                    dockerImages,
+                    null,
+                    null,
+                    dbSourceLabel,
+                    "Not available (flyway query requires DB connection)",
+                    "No DB credentials detected from pod environment."
+            );
+        }
+
+        try {
+            String dbVersion = queryDatabaseVersion(profile);
+            String flywayVersion = queryFlywayVersion(profile);
+            String notes = buildVersionNotes(profile, dbVersion, flywayVersion);
+            return new DeploymentVersionCheck(
+                    dockerImages,
+                    dbVersion,
+                    flywayVersion,
+                    profile.label(),
+                    profile.label(),
+                    notes
+            );
+        } catch (Exception e) {
+            return new DeploymentVersionCheck(
+                    dockerImages,
+                    null,
+                    null,
+                    "DB probe failed",
+                    "DB probe failed",
+                    e.getMessage()
+            );
+        }
+    }
+
+    private DeploymentVersionCheck buildUnavailableVersionCheck() {
+        return new DeploymentVersionCheck(
+                List.of(),
+                null,
+                null,
+                "N/A",
+                "N/A",
+                "Version probe unavailable (query not executed)."
+        );
+    }
+
+    private DatabaseConnectionProfile resolveDatabaseProfile(List<V1Pod> pods, String namespace) {
+        if (pods == null || pods.isEmpty()) {
+            return null;
+        }
+
+        for (V1Pod pod : pods) {
+            Map<String, String> env = collectEnvValuesFromPod(pod, namespace);
+            if (env.isEmpty()) {
+                continue;
+            }
+
+            DatabaseConnectionProfile profile = extractConnectionProfileFromEnv(env);
+            if (profile != null) {
+                return profile;
+            }
+        }
+        return null;
+    }
+
+    private DatabaseConnectionProfile extractConnectionProfileFromEnv(Map<String, String> env) {
+        String url = valueOfFirst(env, DB_URL_KEYS);
+        if (StringUtils.hasText(url)) {
+            String resolvedUrl = normalizePostgresJdbcUrl(url);
+            String username = valueOfFirst(env, DB_USER_KEYS);
+            String password = valueOfFirst(env, DB_PASSWORD_KEYS);
+            if (StringUtils.hasText(username) && StringUtils.hasText(password)) {
+                return new DatabaseConnectionProfile(resolvedUrl, username, password, "env.jdbc_url");
+            }
+        }
+
+        String host = valueOfFirst(env, DB_HOST_KEYS);
+        String port = valueOfFirst(env, DB_PORT_KEYS);
+        String database = valueOfFirst(env, DB_NAME_KEYS);
+        String username = valueOfFirst(env, DB_USER_KEYS);
+        String password = valueOfFirst(env, DB_PASSWORD_KEYS);
+        if (!StringUtils.hasText(host) || !StringUtils.hasText(database) || !StringUtils.hasText(username)
+                || !StringUtils.hasText(password)) {
+            return null;
+        }
+
+        String normalizedPort = StringUtils.hasText(port) ? port : "5432";
+        return new DatabaseConnectionProfile(
+                String.format("jdbc:postgresql://%s:%s/%s", host, normalizedPort, database),
+                username,
+                password,
+                "env.components"
+        );
+    }
+
+    private String queryDatabaseVersion(DatabaseConnectionProfile profile) throws Exception {
+        String dbVersion = executeDatabaseScalar(profile, "SHOW server_version;");
+        return trimString(dbVersion);
+    }
+
+    private String queryFlywayVersion(DatabaseConnectionProfile profile) {
+        try {
+            return trimString(executeDatabaseScalar(profile,
+                    "SELECT version::text " +
+                            "FROM public.flyway_schema_history " +
+                            "WHERE success = true " +
+                            "ORDER BY installed_rank DESC " +
+                            "LIMIT 1;"
+            ));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String buildVersionNotes(DatabaseConnectionProfile profile, String dbVersion, String flywayVersion) {
+        if (StringUtils.hasText(dbVersion) || StringUtils.hasText(flywayVersion)) {
+            return "Profile source: " + profile.label();
+        }
+        return "Profile source: " + profile.label() + " (could not read versions from DB)";
+    }
+
+    private String executeDatabaseScalar(DatabaseConnectionProfile profile, String query) throws Exception {
+        if (profile == null || !StringUtils.hasText(profile.jdbcUrl())
+                || !StringUtils.hasText(profile.username())
+                || !StringUtils.hasText(profile.password())) {
+            return null;
+        }
+
+        try (Connection connection = DriverManager.getConnection(profile.jdbcUrl(), profile.username(), profile.password());
+             Statement statement = connection.createStatement();
+             ResultSet resultSet = statement.executeQuery(query)) {
+            if (resultSet.next()) {
+                return resultSet.getString(1);
+            }
+            return null;
+        }
+    }
+
+    private String normalizePostgresJdbcUrl(String value) {
+        String candidate = value == null ? null : value.trim();
+        if (!StringUtils.hasText(candidate)) {
+            return null;
+        }
+        if (candidate.startsWith("jdbc:")) {
+            return candidate;
+        }
+        if (candidate.startsWith("postgres://")) {
+            return "jdbc:postgresql://" + candidate.substring("postgres://".length());
+        }
+        if (candidate.startsWith("postgresql://")) {
+            return "jdbc:" + candidate;
+        }
+        return candidate;
+    }
+
+    private String trimString(String value) {
+        String v = value == null ? null : value.strip();
+        return StringUtils.hasText(v) ? v : null;
+    }
+
+    private String valueOfFirst(Map<String, String> env, List<String> keys) {
+        for (String key : keys) {
+            String value = env.get(key);
+            if (StringUtils.hasText(value)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private List<String> collectDockerImages(List<V1Pod> pods) {
+        if (pods == null || pods.isEmpty()) {
+            return List.of();
+        }
+        Set<String> images = new TreeSet<>();
+        for (V1Pod pod : pods) {
+            if (pod.getSpec() == null || pod.getSpec().getContainers() == null) {
+                continue;
+            }
+            pod.getSpec().getContainers().forEach(container -> {
+                if (StringUtils.hasText(container.getImage())) {
+                    images.add(container.getImage());
+                }
+            });
+        }
+        return new ArrayList<>(images);
+    }
+
+    private Map<String, String> collectEnvValuesFromPod(V1Pod pod, String namespace) {
+        Map<String, String> result = new java.util.HashMap<>();
+        if (pod == null || pod.getSpec() == null || pod.getSpec().getContainers() == null) {
+            return result;
+        }
+
+        pod.getSpec().getContainers().forEach(container -> {
+            if (container.getEnv() == null) {
+                return;
+            }
+            container.getEnv().forEach(envVar -> {
+                String key = envVar == null ? null : envVar.getName();
+                if (!StringUtils.hasText(key) || result.containsKey(key)) {
+                    return;
+                }
+                String resolved = resolvePodEnvValue(envVar, namespace);
+                if (StringUtils.hasText(resolved)) {
+                    result.put(key, resolved);
+                }
+            });
+        });
+
+        return result;
+    }
+
+    private String resolvePodEnvValue(V1EnvVar envVar, String namespace) {
+        if (envVar == null) {
+            return null;
+        }
+        if (StringUtils.hasText(envVar.getValue())) {
+            return envVar.getValue();
+        }
+        if (envVar.getValueFrom() == null || envVar.getValueFrom().getSecretKeyRef() == null) {
+            return null;
+        }
+        var secretRef = envVar.getValueFrom().getSecretKeyRef();
+        String secretName = secretRef.getName();
+        String secretKey = secretRef.getKey();
+        if (!StringUtils.hasText(secretName) || !StringUtils.hasText(secretKey)) {
+            return null;
+        }
+        try {
+            V1Secret secret = coreV1.readNamespacedSecret(secretName, namespace).execute();
+            if (secret == null || secret.getData() == null) {
+                return null;
+            }
+            byte[] rawValue = secret.getData().get(secretKey);
+            if (rawValue == null) {
+                return null;
+            }
+            return new String(rawValue, StandardCharsets.UTF_8).trim();
+        } catch (ApiException e) {
+            return null;
+        }
+    }
+
+    private record DatabaseConnectionProfile(String jdbcUrl, String username, String password, String label) {
+    }
+
+    private List<V1Pod> filterPodsByName(List<V1Pod> pods, String podName) {
+        if (pods == null || pods.isEmpty()) {
+            return List.of();
+        }
+        if (!StringUtils.hasText(podName)) {
+            return pods;
+        }
+        return pods.stream()
+                .filter(pod -> {
+                    String candidate = pod.getMetadata() != null ? pod.getMetadata().getName() : null;
+                    return StringUtils.hasText(candidate) && candidate.equalsIgnoreCase(podName);
+                })
+                .toList();
+    }
+
 
     // -------------------- query failure short-circuit --------------------
     /**
@@ -387,6 +788,7 @@ public class DeploymentDoctorService {
                 queryInvalidFinding, // primaryFailure is set for FAIL
                 null, // topWarning: N/A when query fails
                 null, // primaryFailureDebug: N/A for short-circuit (not ranked)
+                buildUnavailableVersionCheck(),
                 new Objects(List.of(), List.of(), List.of(), List.of(), List.of())
         );
     }

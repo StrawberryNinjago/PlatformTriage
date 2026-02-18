@@ -2,6 +2,8 @@ package com.example.platformtriage.controller;
 
 import com.example.common.export.ExportBundle;
 import com.example.platformtriage.model.response.DeploymentSummaryResponse;
+import com.example.platformtriage.model.response.DeploymentTraceSearchResponse;
+import com.example.platformtriage.model.response.DeploymentVersionCheck;
 import com.example.platformtriage.service.DeploymentDoctorService;
 import com.example.platformtriage.service.ExportService;
 import org.slf4j.Logger;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import io.kubernetes.client.openapi.ApiException;
 
 import java.util.Map;
 
@@ -70,6 +73,29 @@ public class DeploymentDoctorController {
       log.error("✗ Error exporting deployment diagnostics: {}", e.getMessage(), e);
       throw e;
     }
+  }
+
+  @GetMapping("/versions")
+  public DeploymentVersionCheck getDeploymentVersions(
+      @RequestParam String namespace,
+      @RequestParam(required = false) String selector,
+      @RequestParam(required = false) String release
+  ) throws ApiException {
+    log.info("🔖 Checking versions for namespace: {}, selector: {}, release: {}", namespace, selector, release);
+    return service.getVersionCheck(namespace, selector, release);
+  }
+
+  @GetMapping("/trace")
+  public DeploymentTraceSearchResponse searchTraceInLogs(
+      @RequestParam String namespace,
+      @RequestParam(required = false) String selector,
+      @RequestParam(required = false) String release,
+      @RequestParam(required = false) String podName,
+      @RequestParam String traceId,
+      @RequestParam(defaultValue = "500") Integer lineLimit
+  ) throws ApiException {
+    log.info("🧭 Searching logs for trace '{}' in namespace: {}, selector: {}, release: {}, pod: {}", traceId, namespace, selector, release, podName);
+    return service.findTraceInLogs(namespace, selector, release, podName, traceId, lineLimit);
   }
 
   @ExceptionHandler(Exception.class)

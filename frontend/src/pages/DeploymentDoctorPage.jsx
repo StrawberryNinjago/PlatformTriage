@@ -18,8 +18,7 @@ import {
   ListItemText,
   TextField,
   Button,
-  Tooltip,
-  ButtonGroup
+  Tooltip
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import WarningIcon from '@mui/icons-material/Warning';
@@ -30,6 +29,7 @@ import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CheckIcon from '@mui/icons-material/Check';
 import axios from 'axios';
+import { apiService } from '../services/apiService';
 import AiAssistantPanel from '../components/AiAssistantPanel';
 
 // ⭐ Demo Scenarios Configuration
@@ -71,7 +71,7 @@ const GUARDRAIL_SCENARIOS = [
   }
 ];
 
-function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
+function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState(null);
@@ -82,6 +82,14 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
   const [isCustomMode, setIsCustomMode] = useState(false);
   const [currentAction, setCurrentAction] = useState(null);
   const [lastToolResult, setLastToolResult] = useState(null);
+  const [versionCheck, setVersionCheck] = useState(null);
+  const [versionCheckLoading, setVersionCheckLoading] = useState(false);
+  const [podLogPayload, setPodLogPayload] = useState(null);
+  const [traceSearchLoading, setTraceSearchLoading] = useState(false);
+  const [traceIdQuery, setTraceIdQuery] = useState('');
+  const [tracePodNameQuery, setTracePodNameQuery] = useState('');
+  const [traceLineLimitQuery, setTraceLineLimitQuery] = useState(500);
+  const [traceSearchResult, setTraceSearchResult] = useState(null);
 
   const configFieldSx = {
     '& .MuiInputBase-input': { fontSize: '1.42rem', fontWeight: 600, lineHeight: 1.35 },
@@ -137,6 +145,9 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     setLoading(true);
     setError(null);
     setLastToolResult(null);
+    setVersionCheck(null);
+    setPodLogPayload(null);
+    setTraceSearchResult(null);
     
     try {
       addConsoleMessage(`🔍 Loading deployment summary for namespace: ${effectiveNamespace}...`, 'info');
@@ -168,11 +179,30 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     if (isDeploymentSummaryPayload(payload)) {
       setSummary(payload);
       setLastToolResult(null);
+      setVersionCheck(payload.versionCheck || null);
+      setPodLogPayload(null);
+      setTraceSearchResult(null);
       return;
     }
 
     if (payload == null) {
       setLastToolResult(null);
+      return;
+    }
+
+    if (actionName === 'check_versions' && typeof payload === 'object') {
+      setVersionCheck(payload);
+      setLastToolResult(null);
+      return;
+    }
+
+    if (actionName === 'pod_logs' && isPodLogPayload(payload)) {
+      setPodLogPayload(payload);
+      return;
+    }
+
+    if (actionName === 'trace_search' && typeof payload === 'object') {
+      setTraceSearchResult(payload);
       return;
     }
 
@@ -188,6 +218,9 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     setSummary(null);
     setError(null);
     setLastToolResult(null);
+    setVersionCheck(null);
+    setPodLogPayload(null);
+    setTraceSearchResult(null);
     
     // Populate fields
     setNamespace(scenario.namespace);
@@ -217,6 +250,96 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
     if (field === 'namespace') setNamespace(value);
     if (field === 'selector') setSelector(value);
     if (field === 'release') setRelease(value);
+  };
+
+  const runVersionCheck = async () => {
+    const effectiveNamespace = summary?.target?.namespace || namespace || '';
+    const effectiveSelector = summary?.target?.selector || selector;
+    const effectiveRelease = summary?.target?.release || release;
+
+    if (!effectiveNamespace) {
+      addConsoleMessage('✗ Namespace is required for version check', 'error');
+      setError('Namespace is required for version check');
+      return;
+    }
+    if (!effectiveSelector && !effectiveRelease) {
+      addConsoleMessage('✗ Selector or release is required for version check', 'error');
+      setError('Selector or release is required for version check');
+      return;
+    }
+
+    setVersionCheckLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiService.getDeploymentVersions(
+        effectiveNamespace,
+        effectiveSelector,
+        effectiveRelease
+      );
+      setVersionCheck(response.data);
+      setCurrentAction('check_versions');
+      addConsoleMessage('✓ Deployment version check completed', 'success');
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || err.message;
+      setError(errorMsg);
+      addConsoleMessage(`✗ Version check failed: ${errorMsg}`, 'error');
+      setVersionCheck(null);
+    } finally {
+      setVersionCheckLoading(false);
+    }
+  };
+
+  const runTraceSearch = async () => {
+    const trimmedTraceId = (traceIdQuery || '').trim();
+    if (!trimmedTraceId) {
+      setError('Trace ID is required');
+      addConsoleMessage('✗ Trace search requires a trace id', 'error');
+      return;
+    }
+
+    const effectiveNamespace = summary?.target?.namespace || namespace || '';
+    const effectiveSelector = summary?.target?.selector || selector;
+    const effectiveRelease = summary?.target?.release || release;
+    const requestedPod = tracePodNameQuery.trim();
+    const requestedLineLimit = Number.isFinite(Number(traceLineLimitQuery))
+      ? Math.max(1, Math.min(1000, Number(traceLineLimitQuery)))
+      : 500;
+
+    if (!effectiveNamespace) {
+      addConsoleMessage('✗ Namespace is required for trace search', 'error');
+      setError('Namespace is required for trace search');
+      return;
+    }
+    if (!effectiveSelector && !effectiveRelease) {
+      addConsoleMessage('✗ Selector or release is required for trace search', 'error');
+      setError('Selector or release is required for trace search');
+      return;
+    }
+
+    setTraceSearchLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiService.findDeploymentTrace(
+        effectiveNamespace,
+        trimmedTraceId,
+        effectiveSelector,
+        effectiveRelease,
+        requestedPod || undefined,
+        requestedLineLimit
+      );
+      setTraceSearchResult(response.data);
+      setCurrentAction('trace_search');
+      addConsoleMessage(`✓ Trace search complete for ${trimmedTraceId}`, 'success');
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || err.message;
+      setError(errorMsg);
+      addConsoleMessage(`✗ Trace search failed: ${errorMsg}`, 'error');
+      setTraceSearchResult(null);
+    } finally {
+      setTraceSearchLoading(false);
+    }
   };
 
   // ⭐ IMPROVEMENT 1: Severity-driven icons (backend uses HIGH/MED/INFO)
@@ -281,6 +404,194 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
       deploymentsReady: summary.health.deploymentsReady,
       pods: summary.health.pods
     };
+  };
+
+  const renderVersionPanel = () => {
+    if (!versionCheck) {
+      return null;
+    }
+
+    const dockerImages = versionCheck.dockerImages || [];
+    const dbVersion = versionCheck.databaseVersion || 'N/A';
+    const flywayVersion = versionCheck.flywayVersion || 'N/A';
+    const displayNamespace = summary?.target?.namespace || 'Unknown namespace';
+
+    return (
+      <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+          <Typography variant="h6">
+            Version Check
+          </Typography>
+          <Chip label={displayNamespace} size="small" />
+        </Box>
+
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>
+            Runtime Images
+          </Typography>
+          <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+            {dockerImages.length > 0 ? dockerImages.join('\n') : 'No images detected'}
+          </Typography>
+        </Box>
+
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="body1">
+            Database version: <strong>{dbVersion}</strong>
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Source: {versionCheck.databaseVersionSource || 'N/A'}
+          </Typography>
+        </Box>
+
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="body1">
+            Flyway version: <strong>{flywayVersion}</strong>
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Source: {versionCheck.flywayVersionSource || 'N/A'}
+          </Typography>
+        </Box>
+
+        <Typography variant="body2" color="text.secondary">
+          {versionCheck.notes || ''}
+        </Typography>
+      </Paper>
+    );
+  };
+
+  const renderQuickActions = () => (
+    <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>
+          Deployment Diagnostics Actions
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Button
+          variant="contained"
+          onClick={runVersionCheck}
+          disabled={versionCheckLoading || !summary}
+          sx={{ minHeight: 40, fontSize: '1.05rem', fontWeight: 700 }}
+        >
+          {versionCheckLoading ? <CircularProgress size={18} /> : 'Check Versions'}
+        </Button>
+        <Typography variant="body2" color="text.secondary">
+          Use this panel to query logs by trace id.
+        </Typography>
+      </Box>
+    </Paper>
+  );
+
+  const renderPodLogPanel = () => {
+    if (!podLogPayload) {
+      return null;
+    }
+
+    return (
+      <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>
+          Pod Logs
+        </Typography>
+        <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+          Last lines from pod logs
+        </Typography>
+        <Box sx={{ maxHeight: 360, overflowY: 'auto', bgcolor: '#0f172a', color: '#f8fafc', p: 2, borderRadius: 1 }}>
+          <Typography component="pre" variant="body2" sx={{ m: 0, whiteSpace: 'pre-wrap', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' }}>
+            {podLogPayload.length > 0 ? podLogPayload.join('\n') : 'No logs returned.'}
+          </Typography>
+        </Box>
+      </Paper>
+    );
+  };
+
+  const renderTraceSearchPanel = () => {
+    const matches = traceSearchResult?.matches || [];
+    const hasNoMatchResult = traceSearchResult && (traceSearchResult.totalMatches === 0 || matches.length === 0);
+
+    return (
+      <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
+        <Typography variant="h6" sx={{ mb: 1 }}>
+          Trace Search
+        </Typography>
+
+        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end', flexWrap: 'wrap', mb: 2 }}>
+          <TextField
+            label="Trace ID"
+            value={traceIdQuery}
+            onChange={(e) => setTraceIdQuery(e.target.value)}
+            sx={{ minWidth: 240 }}
+            size="small"
+          />
+          <TextField
+            label="Pod (optional)"
+            value={tracePodNameQuery}
+            onChange={(e) => setTracePodNameQuery(e.target.value)}
+            sx={{ minWidth: 220 }}
+            size="small"
+          />
+          <TextField
+            label="Line limit"
+            value={traceLineLimitQuery}
+            onChange={(e) => setTraceLineLimitQuery(e.target.value)}
+            type="number"
+            sx={{ minWidth: 160 }}
+            size="small"
+            inputProps={{ min: 10, max: 1000 }}
+          />
+          <Button
+            variant="contained"
+            onClick={runTraceSearch}
+            disabled={traceSearchLoading}
+            sx={{ minHeight: 40, fontSize: '1.05rem', fontWeight: 700 }}
+          >
+            {traceSearchLoading ? <CircularProgress size={18} /> : 'Search'}
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => {
+              setTraceSearchResult(null);
+              setTraceIdQuery('');
+            }}
+          >
+            Reset
+          </Button>
+        </Box>
+
+        {traceSearchResult && (
+          <Box>
+            <Box sx={{ mb: 1 }}>
+              <Typography variant="subtitle2">
+                Trace: {traceSearchResult.traceId || 'N/A'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Namespace: {traceSearchResult.namespace || '-'} | Searched pods: {traceSearchResult.searchedPods}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Total matches: {traceSearchResult.totalMatches}
+              </Typography>
+            </Box>
+
+            {hasNoMatchResult && (
+              <Alert severity="info" sx={{ mb: 1 }}>
+                No matches found. Expand scope or use a narrower trace identifier.
+              </Alert>
+            )}
+
+            {matches.map((match, idx) => (
+              <Paper key={idx} variant="outlined" sx={{ p: 1.5, mb: 1.5, borderRadius: 1.5 }}>
+                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                  Pod: <strong>{match.podName || `Pod ${idx + 1}`}</strong>
+                </Typography>
+                <Box sx={{ bgcolor: '#0f172a', color: '#f8fafc', p: 1.5, borderRadius: 1, maxHeight: 220, overflow: 'auto' }}>
+                  <Typography component="pre" variant="body2" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', whiteSpace: 'pre-wrap', margin: 0 }}>
+                    {(match.lines || []).join('\n') || 'No matched lines'}
+                  </Typography>
+                </Box>
+              </Paper>
+            ))}
+          </Box>
+        )}
+      </Paper>
+    );
   };
 
   const renderToolResultPanel = () => {
@@ -610,7 +921,15 @@ function DeploymentDoctorPage({ addConsoleMessage, k8sStatus, setK8sStatus }) {
               </Box>
             )}
 
-            {!loading && renderToolResultPanel()}
+            {!loading && (
+              <>
+                {renderQuickActions()}
+                {renderVersionPanel()}
+                {renderPodLogPanel()}
+                {renderTraceSearchPanel()}
+                {renderToolResultPanel()}
+              </>
+            )}
 
             {summary && !loading && (
               <Box>

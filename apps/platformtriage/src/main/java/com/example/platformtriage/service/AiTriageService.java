@@ -39,6 +39,7 @@ public class AiTriageService {
     private static final Pattern LIMIT_EVENTS_PATTERN = Pattern.compile("(?i)\\blimit\\s*events\\s*[:=]?\\s*(\\d+)");
     private static final Pattern EVENT_COUNT_PATTERN = Pattern.compile("(?i)\\b(?:last|latest|show|show me|display|need|give me)?\\s*(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s+(?:of\\s+)?events?\\b");
     private static final Pattern LOG_LINES_PATTERN = Pattern.compile("(?i)\\b(?:last\\s+)?(\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\\s+(?:lines?|line)\\s+(?:of\\s+)?logs\\b");
+    private static final Pattern TRACE_ID_PATTERN = Pattern.compile("(?i)\\btrace(?:[-_ ]?id)?\\s*[:=]?\\s*([a-z0-9]{4,}-[a-z0-9]{4,}|[a-f0-9]{4,}|[a-f0-9\\-_:/.]+)\\b");
     private static final Pattern FINDING_CODE_PATTERN = Pattern.compile("(?i)\\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b");
 
     private final OpenAiIntentRouter openAiIntentRouter;
@@ -164,6 +165,17 @@ public class AiTriageService {
             params.put("logLines", logLines);
         }
 
+        String traceId = pickTraceIdFromText(question);
+        if (!StringUtils.hasText(traceId)) {
+            traceId = pickString(rawContext, "traceId");
+        }
+        if (!StringUtils.hasText(traceId)) {
+            traceId = pickString(rawContext, "trace");
+        }
+        if (StringUtils.hasText(traceId)) {
+            params.put("traceId", traceId);
+        }
+
         if (isWarningsOnlyRequest(question)) {
             params.put("warningsOnly", "true");
         }
@@ -226,6 +238,14 @@ public class AiTriageService {
         return StringUtils.hasText(asString) ? asString : null;
     }
 
+    private String pickTraceIdFromText(String text) {
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        Matcher matcher = TRACE_ID_PATTERN.matcher(text);
+        return matcher.find() ? matcher.group(1).trim() : null;
+    }
+
     private Integer parseLimitEvents(String value) {
         if (!StringUtils.hasText(value)) {
             return 50;
@@ -249,6 +269,9 @@ public class AiTriageService {
                         "Try: list warning events only",
                         "Try: list services",
                         "Try: show last 10 lines of logs",
+                        "Try: check versions",
+                        "Try: show docker and flyway versions",
+                        "Try: search trace id abc123",
                         "Try: summarize",
                         "Try: what is the primary issue",
                         "Try: what are the risks",
@@ -294,6 +317,19 @@ public class AiTriageService {
 
         if (isListServicesIntent(normalized)) {
             return AiIntent.from(PlatformTriageTools.LIST_SERVICES, 0.93d, collectParamsFromQuestion(question, summary));
+        }
+
+        if (isVersionCheckIntent(normalized)) {
+            return AiIntent.from(PlatformTriageTools.CHECK_VERSIONS, 0.95d, collectParamsFromQuestion(question, summary));
+        }
+
+        if (isTraceSearchIntent(normalized)) {
+            Map<String, String> params = collectParamsFromQuestion(question, summary);
+            String traceId = pickTraceIdFromText(question);
+            if (StringUtils.hasText(traceId)) {
+                params.put("traceId", traceId);
+            }
+            return AiIntent.from(PlatformTriageTools.TRACE_SEARCH, 0.94d, params);
         }
 
         // Keep health checks stable against the currently loaded summary unless user asks for refresh.
@@ -646,7 +682,7 @@ public class AiTriageService {
             return false;
         }
         return containsAny(
-                normalized,
+            normalized,
                 "service",
                 "services",
                 "endpoints",
@@ -654,6 +690,42 @@ public class AiTriageService {
                 "svc",
                 "service details"
         );
+    }
+
+    private boolean isVersionCheckIntent(String normalized) {
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+        return containsAny(
+                normalized,
+                "check version",
+                "versions",
+                "version check",
+                "image versions",
+                "docker image",
+                "flyway",
+                "postgres version",
+                "db version"
+        );
+    }
+
+    private boolean isTraceSearchIntent(String normalized) {
+        if (!StringUtils.hasText(normalized)) {
+            return false;
+        }
+        if (!containsAny(normalized, "trace")) {
+            return false;
+        }
+        return containsAny(
+                normalized,
+                "find trace",
+                "search trace",
+                "trace id",
+                "traceid",
+                "trace-search",
+                "trace search",
+                "show trace"
+        ) || StringUtils.hasText(pickTraceIdFromText(normalized));
     }
 
     private boolean isWarningsOnlyRequest(String normalized) {

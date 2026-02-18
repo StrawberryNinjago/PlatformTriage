@@ -89,6 +89,23 @@ export const apiService = {
     axios.get(`${DEPLOYMENT_API_BASE}/summary`, { 
       params: { namespace, selector, release, limitEvents } 
     }),
+
+  getDeploymentVersions: (namespace, selector, release) =>
+    axios.get(`${DEPLOYMENT_API_BASE}/versions`, {
+      params: { namespace, selector, release }
+    }),
+
+  findDeploymentTrace: (namespace, traceId, selector, release, podName, lineLimit = 500) =>
+    axios.get(`${DEPLOYMENT_API_BASE}/trace`, {
+      params: {
+        namespace,
+        traceId,
+        selector,
+        release,
+        podName,
+        lineLimit
+      }
+    }),
   
   // Export deployment diagnostics
   exportDeploymentDiagnostics: (namespace, selector, release, limitEvents = 50) =>
