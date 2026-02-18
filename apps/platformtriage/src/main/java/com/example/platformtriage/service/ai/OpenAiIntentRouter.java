@@ -129,7 +129,7 @@ public class OpenAiIntentRouter {
                   "confidence": 0.0,
                   "params": {
                     "namespace":"...", "selector":"...", "release":"...",
-                    "podName":"...", "logLines":"...", "traceId":"...",
+                    "podName":"...", "logLines":"...", "traceId":"...", "query":"...",
                     "findingCode":"...", "limitEvents":"...",
                     "warningsOnly":"..."
                   }

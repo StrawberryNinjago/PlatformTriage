@@ -53,12 +53,15 @@ public class TraceSearchSkill implements PlatformTriageSkill {
                 ? context.parameter("traceId")
                 : context.parameter("trace");
         if (!StringUtils.hasText(traceId)) {
+            traceId = context.parameter("query");
+        }
+        if (!StringUtils.hasText(traceId)) {
             return new PlatformTriageSkillResult(
                     "clarify",
-                    "I can run trace search, but I could not detect the trace id.",
-                    List.of("No trace id provided."),
-                    List.of("Try: find trace id=trace-abc123 in logs", "Try: search for trace 4d3f9a"),
-                    List.of("Need logs with the exact trace/correlation id."),
+                    "I can run trace search, but I could not detect trace id or search text.",
+                    List.of("No trace id or search text provided."),
+                    List.of("Try: find trace id=trace-abc123 in logs", "Try: search logs for process 38"),
+                    List.of("Need logs with the exact trace/correlation id or a text fragment."),
                     metadata().tool(),
                     false,
                     null

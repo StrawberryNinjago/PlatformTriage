@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -91,11 +92,13 @@ public class DeploymentDoctorController {
       @RequestParam(required = false) String selector,
       @RequestParam(required = false) String release,
       @RequestParam(required = false) String podName,
-      @RequestParam String traceId,
+      @RequestParam(required = false) String traceId,
+      @RequestParam(required = false, name = "query") String query,
       @RequestParam(defaultValue = "500") Integer lineLimit
   ) throws ApiException {
-    log.info("🧭 Searching logs for trace '{}' in namespace: {}, selector: {}, release: {}, pod: {}", traceId, namespace, selector, release, podName);
-    return service.findTraceInLogs(namespace, selector, release, podName, traceId, lineLimit);
+    String searchQuery = StringUtils.hasText(traceId) ? traceId : query;
+    log.info("🧭 Searching logs for query '{}' in namespace: {}, selector: {}, release: {}, pod: {}", searchQuery, namespace, selector, release, podName);
+    return service.findTraceInLogs(namespace, selector, release, podName, searchQuery, lineLimit);
   }
 
   @ExceptionHandler(Exception.class)

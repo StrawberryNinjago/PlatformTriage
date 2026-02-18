@@ -172,8 +172,15 @@ public class AiTriageService {
         if (!StringUtils.hasText(traceId)) {
             traceId = pickString(rawContext, "trace");
         }
+        String query = pickString(rawContext, "query");
+        if (!StringUtils.hasText(traceId) && StringUtils.hasText(query)) {
+            traceId = query;
+        }
         if (StringUtils.hasText(traceId)) {
             params.put("traceId", traceId);
+            params.put("query", traceId);
+        } else if (StringUtils.hasText(query)) {
+            params.put("query", query);
         }
 
         if (isWarningsOnlyRequest(question)) {
@@ -696,17 +703,23 @@ public class AiTriageService {
         if (!StringUtils.hasText(normalized)) {
             return false;
         }
-        return containsAny(
+        if (containsAny(
                 normalized,
                 "check version",
-                "versions",
+                "check versions",
                 "version check",
-                "image versions",
-                "docker image",
                 "flyway",
                 "postgres version",
-                "db version"
-        );
+                "db version",
+                "database version"
+        )) {
+            return true;
+        }
+
+        // Capture phrases like "dock image version" or "container image version".
+        boolean mentionsVersion = normalized.matches(".*\\bversions?\\b.*");
+        boolean mentionsImageFamily = normalized.matches(".*\\b(dock|docker|image|images|container|containers)\\b.*");
+        return mentionsVersion && mentionsImageFamily;
     }
 
     private boolean isTraceSearchIntent(String normalized) {

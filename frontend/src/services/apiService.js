@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const API_BASE = 'http://localhost:8081/api/db';
 const SQL_API_BASE = 'http://localhost:8081/api/sql';
-const DEPLOYMENT_API_BASE = 'http://localhost:8081/api/deployment';
+const DEPLOYMENT_API_BASE = '/api/deployment';
 const SMOKE_TEST_API_BASE = 'http://localhost:8081/api/smoke-tests';
 const AI_API_BASE = 'http://localhost:8081/api/ai';
 const DEPLOYMENT_AI_API_BASE = 'http://localhost:8082/api/ai';
@@ -95,11 +95,12 @@ export const apiService = {
       params: { namespace, selector, release }
     }),
 
-  findDeploymentTrace: (namespace, traceId, selector, release, podName, lineLimit = 500) =>
+  findDeploymentTrace: (namespace, query, selector, release, podName, lineLimit = 500) =>
     axios.get(`${DEPLOYMENT_API_BASE}/trace`, {
       params: {
         namespace,
-        traceId,
+        traceId: query,
+        query,
         selector,
         release,
         podName,

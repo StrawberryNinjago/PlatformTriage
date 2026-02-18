@@ -7,6 +7,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -178,20 +179,22 @@ public class DeploymentDoctorService {
             String selector,
             String release,
             String podName,
-            String traceId,
+            String query,
             Integer lineLimit
     ) throws ApiException {
         if (!StringUtils.hasText(namespace)) {
             throw new IllegalArgumentException("Namespace is required to search logs.");
         }
-        if (!StringUtils.hasText(traceId)) {
-            throw new IllegalArgumentException("traceId is required for log trace search.");
+        if (!StringUtils.hasText(query)) {
+            throw new IllegalArgumentException("traceId or query is required for log search.");
         }
+        String queryTerm = query.trim();
+        String queryTermLower = queryTerm.toLowerCase(Locale.ROOT);
 
         String effectiveSelector = buildEffectiveSelector(selector, release);
         List<V1Pod> pods = listPodsOrThrow(namespace, effectiveSelector);
         if (pods.isEmpty()) {
-            return new DeploymentTraceSearchResponse(namespace, traceId, List.of(), 0, 0);
+            return new DeploymentTraceSearchResponse(namespace, queryTerm, List.of(), 0, 0);
         }
 
         int requestedLines = lineLimit == null ? TRACE_SEARCH_MIN_LINES : lineLimit;
@@ -215,7 +218,7 @@ public class DeploymentDoctorService {
                     try {
                         List<String> matchedLines = getPodLogs(namespace, name, safeLineLimit)
                                 .lines()
-                                .filter(line -> line.contains(traceId))
+                                .filter(line -> line != null && line.toLowerCase(Locale.ROOT).contains(queryTermLower))
                                 .toList();
                         if (matchedLines.isEmpty()) {
                             return null;
@@ -234,7 +237,7 @@ public class DeploymentDoctorService {
 
         return new DeploymentTraceSearchResponse(
                 namespace,
-                traceId,
+                queryTerm,
                 matches,
                 targetPods.size(),
                 totalMatches

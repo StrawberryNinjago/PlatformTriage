@@ -291,10 +291,10 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
   };
 
   const runTraceSearch = async () => {
-    const trimmedTraceId = (traceIdQuery || '').trim();
-    if (!trimmedTraceId) {
-      setError('Trace ID is required');
-      addConsoleMessage('✗ Trace search requires a trace id', 'error');
+    const trimmedQuery = (traceIdQuery || '').trim();
+    if (!trimmedQuery) {
+      setError('Trace ID or search text is required');
+      addConsoleMessage('✗ Trace search requires trace id or text', 'error');
       return;
     }
 
@@ -323,7 +323,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
     try {
       const response = await apiService.findDeploymentTrace(
         effectiveNamespace,
-        trimmedTraceId,
+        trimmedQuery,
         effectiveSelector,
         effectiveRelease,
         requestedPod || undefined,
@@ -331,7 +331,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
       );
       setTraceSearchResult(response.data);
       setCurrentAction('trace_search');
-      addConsoleMessage(`✓ Trace search complete for ${trimmedTraceId}`, 'success');
+      addConsoleMessage(`✓ Trace search complete for "${trimmedQuery}"`, 'success');
     } catch (err) {
       const errorMsg = err.response?.data?.message || err.message;
       setError(errorMsg);
@@ -474,7 +474,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
           {versionCheckLoading ? <CircularProgress size={18} /> : 'Check Versions'}
         </Button>
         <Typography variant="body2" color="text.secondary">
-          Use this panel to query logs by trace id.
+          Use this panel to query logs by trace id or plain text.
         </Typography>
       </Box>
     </Paper>
@@ -507,60 +507,76 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
     const hasNoMatchResult = traceSearchResult && (traceSearchResult.totalMatches === 0 || matches.length === 0);
 
     return (
-      <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>
-          Trace Search
-        </Typography>
+      <Paper elevation={2} sx={{ p: 2.25, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5, gap: 1.5, flexWrap: 'wrap' }}>
+          <Typography variant="h6">
+            Trace / Text Search
+          </Typography>
+          <Chip label="Case-insensitive" variant="outlined" size="small" />
+        </Box>
 
-        <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-end', flexWrap: 'wrap', mb: 2 }}>
-          <TextField
-            label="Trace ID"
-            value={traceIdQuery}
-            onChange={(e) => setTraceIdQuery(e.target.value)}
-            sx={{ minWidth: 240 }}
-            size="small"
-          />
-          <TextField
-            label="Pod (optional)"
-            value={tracePodNameQuery}
-            onChange={(e) => setTracePodNameQuery(e.target.value)}
-            sx={{ minWidth: 220 }}
-            size="small"
-          />
-          <TextField
-            label="Line limit"
-            value={traceLineLimitQuery}
-            onChange={(e) => setTraceLineLimitQuery(e.target.value)}
-            type="number"
-            sx={{ minWidth: 160 }}
-            size="small"
-            inputProps={{ min: 10, max: 1000 }}
-          />
-          <Button
-            variant="contained"
-            onClick={runTraceSearch}
-            disabled={traceSearchLoading}
-            sx={{ minHeight: 40, fontSize: '1.05rem', fontWeight: 700 }}
-          >
-            {traceSearchLoading ? <CircularProgress size={18} /> : 'Search'}
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={() => {
-              setTraceSearchResult(null);
-              setTraceIdQuery('');
-            }}
-          >
-            Reset
-          </Button>
+        <Box sx={{ p: 1.5, mb: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1.5, bgcolor: 'rgba(15, 23, 42, 0.02)' }}>
+          <Grid container spacing={1.25} alignItems="center">
+            <Grid item xs={12} md={4}>
+              <TextField
+                label="Trace ID or text"
+                value={traceIdQuery}
+                onChange={(e) => setTraceIdQuery(e.target.value)}
+                placeholder="trace-abc123 or process 38"
+                fullWidth
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <TextField
+                label="Pod (optional)"
+                value={tracePodNameQuery}
+                onChange={(e) => setTracePodNameQuery(e.target.value)}
+                fullWidth
+                size="small"
+              />
+            </Grid>
+            <Grid item xs={12} md={2}>
+              <TextField
+                label="Line limit"
+                value={traceLineLimitQuery}
+                onChange={(e) => setTraceLineLimitQuery(e.target.value)}
+                type="number"
+                fullWidth
+                size="small"
+                inputProps={{ min: 10, max: 1000 }}
+              />
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  variant="contained"
+                  onClick={runTraceSearch}
+                  disabled={traceSearchLoading}
+                  sx={{ minHeight: 40, fontSize: '1.05rem', fontWeight: 700 }}
+                >
+                  {traceSearchLoading ? <CircularProgress size={18} /> : 'Search'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  onClick={() => {
+                    setTraceSearchResult(null);
+                    setTraceIdQuery('');
+                  }}
+                  sx={{ minHeight: 40, fontSize: '1rem', fontWeight: 700 }}
+                >
+                  Clear
+                </Button>
+              </Box>
+            </Grid>
+          </Grid>
         </Box>
 
         {traceSearchResult && (
           <Box>
             <Box sx={{ mb: 1 }}>
               <Typography variant="subtitle2">
-                Trace: {traceSearchResult.traceId || 'N/A'}
+                Query: {traceSearchResult.traceId || 'N/A'}
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 Namespace: {traceSearchResult.namespace || '-'} | Searched pods: {traceSearchResult.searchedPods}
@@ -572,7 +588,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
 
             {hasNoMatchResult && (
               <Alert severity="info" sx={{ mb: 1 }}>
-                No matches found. Expand scope or use a narrower trace identifier.
+                No matches found. Try a different text, larger line limit, or broader pod scope.
               </Alert>
             )}
 
