@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Container, Paper, Box, Tabs, Tab } from '@mui/material';
+import { useEffect, useState } from 'react';
+import { Container, Paper, Box, Tabs, Tab, Chip, Typography } from '@mui/material';
 import ConnectionForm from '../components/ConnectionForm';
 import SummaryPanel from '../components/SummaryPanel';
 import ResultsPanel from '../components/ResultsPanel';
@@ -29,6 +29,26 @@ function DBDoctorPage({
   const [currentAction, setCurrentAction] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [sourceConnectionDetails, setSourceConnectionDetails] = useState(null);
+  const [comparisonResult, setComparisonResult] = useState(null);
+  const [activeConnections, setActiveConnections] = useState([]);
+
+  useEffect(() => {
+    if (connectionStatus === 'connected') {
+      refreshActiveConnections();
+      return;
+    }
+    setActiveConnections([]);
+  }, [connectionStatus, connectionId]);
+
+  const refreshActiveConnections = async () => {
+    try {
+      const response = await apiService.listConnections();
+      setActiveConnections(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Failed to load active connections:', error);
+      setActiveConnections([]);
+    }
+  };
 
   const handleConnect = async (formData) => {
     try {
@@ -39,6 +59,7 @@ function DBDoctorPage({
       addConsoleMessage('✓ Connected successfully', 'success');
       setResults(response.data);
       setCurrentAction('connect');
+      await refreshActiveConnections();
       
       // Fetch source connection details for comparison tab
       try {
@@ -97,7 +118,15 @@ function DBDoctorPage({
     }
 
     if (payload && typeof payload === 'object') {
+      if (actionName === 'compare_environments') {
+        setComparisonResult(payload);
+        setActiveTab(1);
+        refreshActiveConnections();
+        return;
+      }
+
       setResults(payload);
+      setActiveTab(0);
 
       if (actionName === 'flyway_health') {
         setSummaryData(prev => ({
@@ -157,6 +186,10 @@ function DBDoctorPage({
         schema,
         specificTables
       );
+
+      setComparisonResult(response.data);
+      setCurrentAction('compare_environments');
+      setActiveTab(1);
       
       const totalDrift = response.data.driftSections.reduce(
         (sum, section) => sum + section.differCount,
@@ -242,6 +275,43 @@ function DBDoctorPage({
             />
           </Box>
 
+          {connectionStatus === 'connected' && (
+            <Box
+              sx={{
+                px: 2,
+                py: 1.25,
+                borderBottom: 1,
+                borderColor: 'divider',
+                bgcolor: '#f8fbff',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1.5,
+                flexWrap: 'wrap'
+              }}
+            >
+              <Chip
+                size="small"
+                color={activeConnections.length >= 2 ? 'success' : 'default'}
+                label={`${activeConnections.length} active environment${activeConnections.length === 1 ? '' : 's'}`}
+                sx={{
+                  '& .MuiChip-label': {
+                    fontSize: '0.98rem',
+                    fontWeight: 700
+                  }
+                }}
+              />
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ fontSize: '1rem', fontWeight: 500 }}
+              >
+                {activeConnections.length >= 2
+                  ? 'Multi-env compare is ready. Use Compare tab or ask: "Do my two environments align?"'
+                  : 'Connect one more environment to enable alignment compare.'}
+              </Typography>
+            </Box>
+          )}
+
           <Tabs 
             value={activeTab} 
             onChange={handleTabChange}
@@ -295,6 +365,7 @@ function DBDoctorPage({
                 isConnected={connectionStatus === 'connected'}
                 currentConnectionId={connectionId}
                 sourceConnectionDetails={sourceConnectionDetails}
+                externalComparisonResult={comparisonResult}
                 onCompare={handleCompareEnvironments}
               />
             )}

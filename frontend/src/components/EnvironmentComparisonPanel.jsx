@@ -57,6 +57,7 @@ export default function EnvironmentComparisonPanel({
   isConnected, 
   currentConnectionId,
   sourceConnectionDetails,
+  externalComparisonResult,
   onCompare 
 }) {
   const [sourceConnectionId, setSourceConnectionId] = useState('');
@@ -87,12 +88,47 @@ export default function EnvironmentComparisonPanel({
   const [showAllBlastRadius, setShowAllBlastRadius] = useState(false);
   const [actionMenuAnchor, setActionMenuAnchor] = useState(null);
 
-  // Fetch available connections when component mounts or when isConnected changes
+  // Keep available connection list current when active connection or external compare result changes.
   useEffect(() => {
     if (isConnected) {
       fetchAvailableConnections();
     }
-  }, [isConnected]);
+  }, [isConnected, currentConnectionId, externalComparisonResult]);
+
+  useEffect(() => {
+    if (externalComparisonResult) {
+      setComparisonResult(externalComparisonResult);
+    }
+  }, [externalComparisonResult]);
+
+  useEffect(() => {
+    if (availableConnections.length === 0) {
+      return;
+    }
+
+    if (!sourceConnectionId) {
+      const hasCurrent = availableConnections.some((conn) => conn.connectionId === currentConnectionId);
+      const preferredSource = hasCurrent
+        ? currentConnectionId
+        : availableConnections[0].connectionId;
+      setSourceConnectionId(preferredSource);
+
+      if (!targetConnectionId || targetConnectionId === preferredSource) {
+        const preferredTarget = availableConnections.find((conn) => conn.connectionId !== preferredSource);
+        if (preferredTarget) {
+          setTargetConnectionId(preferredTarget.connectionId);
+        }
+      }
+      return;
+    }
+
+    if (!targetConnectionId || targetConnectionId === sourceConnectionId) {
+      const preferredTarget = availableConnections.find((conn) => conn.connectionId !== sourceConnectionId);
+      if (preferredTarget) {
+        setTargetConnectionId(preferredTarget.connectionId);
+      }
+    }
+  }, [availableConnections, currentConnectionId, sourceConnectionId, targetConnectionId]);
 
   const fetchAvailableConnections = async () => {
     try {
@@ -1063,6 +1099,21 @@ export default function EnvironmentComparisonPanel({
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Select the source and target database connections to compare:
             </Typography>
+
+            {availableConnections.length > 0 && (
+              <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                {availableConnections.map((conn) => (
+                  <Chip
+                    key={conn.connectionId}
+                    size="small"
+                    color={conn.connectionId === currentConnectionId ? 'primary' : 'default'}
+                    variant={conn.connectionId === currentConnectionId ? 'filled' : 'outlined'}
+                    label={`${conn.host}:${conn.port}/${conn.database} (${conn.username})`}
+                  />
+                ))}
+              </Box>
+            )}
+
             <Grid container spacing={2}>
               <Grid item xs={6}>
                 <FormControl fullWidth sx={{ minWidth: 240 }}>
@@ -1124,7 +1175,7 @@ export default function EnvironmentComparisonPanel({
 
             {availableConnections.length > 0 && availableConnections.length < 2 && (
               <Alert severity="warning" sx={{ mt: 2 }}>
-                You have {availableConnections.length} connection. Connect to at least one more database to enable comparison.
+                You have {availableConnections.length} active connection. Connect at least one more database to enable comparison.
               </Alert>
             )}
 
