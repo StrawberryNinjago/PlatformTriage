@@ -39,6 +39,7 @@ public class VerifyConnectionSkill implements DbTriageSkill {
                 List.of(
                         "Database: " + identity.database(),
                         "Current user: " + identity.currentUser(),
+                        "PostgreSQL version: " + identity.serverVersion(),
                         "Schema: " + identity.schema()
                 ),
                 List.of("Run Flyway health or list tables next."),

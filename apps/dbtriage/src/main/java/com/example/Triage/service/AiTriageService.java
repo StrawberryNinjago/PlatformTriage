@@ -122,8 +122,12 @@ public class AiTriageService {
                 List.of(
                         "Try: check flyway health",
                         "Try: what are the tables",
+                        "Try: list public tables",
                         "Try: show table details for cart_item",
+                        "Try: check index and constraints for cart_item",
+                        "Try: compare environments",
                         "Try: do I have permission for cart_item",
+                        "Try: what is the database version",
                         "Try: why this SQL does not work: ..."),
                 List.of("Run one of the tool prompts for an actionable response."),
                 List.of(
@@ -158,11 +162,59 @@ public class AiTriageService {
                 "who am i", "who is", "current user", "identity", "connection info", "verify connection", "who is connected")) {
             return AiIntent.from(DbTriageTools.VERIFY_CONNECTION, 0.95d, Map.of("schema", schema));
         }
+        if (containsAny(
+                normalized,
+                "current db version",
+                "current database version",
+                "database version",
+                "db version",
+                "version of postgres",
+                "postgres version",
+                "postgresql version",
+                "server version",
+                "what is the version",
+                "what is current version",
+                "show server_version")) {
+            return AiIntent.from(DbTriageTools.VERIFY_CONNECTION, 0.95d, Map.of("schema", schema));
+        }
+        if (containsAny(
+                normalized,
+                "compare environments",
+                "compare environment",
+                "compare env",
+                "compare envs",
+                "environment alignment",
+                "environment align",
+                "do my two environments align",
+                "do my two environment align",
+                "do two environments align",
+                "do two environment align",
+                "are my two environments aligned",
+                "are my two environment aligned",
+                "are environments aligned",
+                "are environment aligned",
+                "envs align",
+                "do envs align")) {
+            return AiIntent.from(DbTriageTools.COMPARE_ENVIRONMENTS, 0.95d, Map.of("schema", schema));
+        }
         if (containsAny(normalized, "flyway", "migration", "health check", "migration status", "migration health")) {
             return AiIntent.from(DbTriageTools.FLYWAY_HEALTH, 0.95d, Map.of("schema", schema));
         }
         if (containsAny(normalized, "show the tables", "list tables", "show all tables", "what tables", "all tables", "tables in")) {
             return AiIntent.from(DbTriageTools.LIST_TABLES, 0.95d, Map.of("schema", schema));
+        }
+        if (containsAny(normalized, "list public tables", "show public tables", "all public tables", "tables in public")) {
+            return AiIntent.from(DbTriageTools.LIST_TABLES, 0.95d, Map.of("schema", schema));
+        }
+        if (normalized.matches(".*\\bpublic\\b.*\\btables\\b.*")) {
+            return AiIntent.from(DbTriageTools.LIST_TABLES, 0.93d, Map.of("schema", schema));
+        }
+        if (normalized.matches(".*\\bshow\\b.*\\btables\\b.*") || normalized.matches(".*\\blist\\b.*\\btables\\b.*")) {
+            return AiIntent.from(DbTriageTools.LIST_TABLES, 0.94d, Map.of("schema", schema));
+        }
+        if (normalized.matches(".*\\blist\\b.*\\bpublic\\b.*\\btables\\b.*")
+                || normalized.matches(".*\\bshow\\b.*\\bpublic\\b.*\\btables\\b.*")) {
+            return AiIntent.from(DbTriageTools.LIST_TABLES, 0.94d, Map.of("schema", schema));
         }
         if (containsAny(normalized, "which tables", "what are the tables", "what are tables", "how many tables")) {
             return AiIntent.from(DbTriageTools.LIST_TABLES, 0.92d, Map.of("schema", schema));
@@ -203,6 +255,24 @@ public class AiTriageService {
                     StringUtils.hasText(table)
                             ? withSchema(Map.of("tableName", table), schema)
                             : Map.of("schema", resolveSchemaLabel(schema)));
+        }
+
+        if (containsAny(
+                normalized,
+                "check index",
+                "check indexes",
+                "check constraint",
+                "check constraints",
+                "index",
+                "indexes",
+                "constraint",
+                "constraints",
+                "index and constraints")
+                && StringUtils.hasText(table)) {
+            return AiIntent.from(
+                    DbTriageTools.TABLE_DETAILS,
+                    0.9d,
+                    withSchema(Map.of("tableName", table), schema));
         }
 
         String indexTable = extractIndexTableName(question);

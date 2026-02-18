@@ -58,6 +58,11 @@ const assistantProfiles = {
         text: 'Show a table details for cart_item.'
       },
       {
+        id: 'compare',
+        label: 'Compare Envs',
+        text: 'Do my two environments align?'
+      },
+      {
         id: 'permission',
         label: 'Table Permission',
         text: 'Do I have permission for cart_item?'

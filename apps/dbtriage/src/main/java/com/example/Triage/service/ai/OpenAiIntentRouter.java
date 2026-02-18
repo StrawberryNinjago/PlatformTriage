@@ -118,12 +118,13 @@ public class OpenAiIntentRouter {
                 - %s
                 - %s
                 - %s
+                - %s
 
                 Use this JSON format and nothing else:
                 {
                   "tool": "...",
                   "confidence": 0.0,
-                  "params": {"schema":"public", "tableName":"...", "searchQuery":"...", "sql":"...", "operationType":"SELECT|INSERT|UPDATE|DELETE|UNKNOWN"}
+                  "params": {"schema":"public", "tableName":"...", "searchQuery":"...", "sql":"...", "operationType":"SELECT|INSERT|UPDATE|DELETE|UNKNOWN", "sourceConnectionId":"...", "targetConnectionId":"...", "sourceEnvironmentName":"...", "targetEnvironmentName":"..."}
                 }
 
                 Prefer tool detection from user intent phrases, not from assumptions.
@@ -136,9 +137,10 @@ public class OpenAiIntentRouter {
                                 DbTriageTools.SEARCH_TABLES,
                                 DbTriageTools.TABLE_DETAILS,
                                 DbTriageTools.CHECK_PRIVILEGES,
+                                DbTriageTools.COMPARE_ENVIRONMENTS,
                                 DbTriageTools.SQL_ANALYSIS
                         )
-        ));
+                ));
         messages.add(Map.of(
                 "role", "user",
                 "content", "Active schema: " + (activeSchema == null || activeSchema.isBlank() ? "public" : activeSchema)
