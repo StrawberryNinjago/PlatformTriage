@@ -18,9 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.example.smoketests.model.enums.ErrorCode;
+import com.example.smoketests.model.request.GenerateTestsPreviewRequest;
 import com.example.smoketests.model.request.RunSmokeTestsRequest;
 import com.example.smoketests.model.request.ValidateConfigRequest;
 import com.example.smoketests.model.response.ApiErrorResponse;
+import com.example.smoketests.model.response.GenerateTestsPreviewResponse;
 import com.example.smoketests.model.response.RunResponse;
 import com.example.smoketests.model.response.SpecResolveResponse;
 import com.example.smoketests.model.response.UploadResponse;
@@ -48,6 +50,7 @@ public class SmokeTestsController {
     private final com.example.smoketests.service.WorkflowService workflowService;
     private final com.example.smoketests.service.ValidationService validationService;
     private final com.example.smoketests.service.ExecutionService executionService;
+    private final com.example.smoketests.service.SmokeTestGenerationService smokeTestGenerationService;
     private final com.example.smoketests.service.UploadService uploadService;
     private final com.example.smoketests.handler.EvidenceHandler evidenceHandler;
     private final com.example.smoketests.handler.ExportHandler exportHandler;
@@ -119,6 +122,20 @@ public class SmokeTestsController {
                 request.getTarget().getCapability());
 
         ValidationResponse response = validationService.validateConfig(request);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Generate contract smoke tests from Swagger/OpenAPI text and return ordered
+     * preview.
+     */
+    @PostMapping("/spec/generate-tests")
+    public ResponseEntity<GenerateTestsPreviewResponse> generateTestsPreview(
+            @Valid @RequestBody GenerateTestsPreviewRequest request) {
+        log.info("Generating smoke test preview (enforceOrder={})", request.isEnforceOrder());
+        GenerateTestsPreviewResponse response = smokeTestGenerationService.generatePreview(
+                request.getSpecContent(),
+                request.isEnforceOrder());
         return ResponseEntity.ok(response);
     }
 
@@ -202,9 +219,11 @@ public class SmokeTestsController {
                 .error(errorInfo)
                 .build();
 
-        return ResponseEntity
-                .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(response);
+        HttpStatus status = (e instanceof IllegalArgumentException)
+                ? HttpStatus.BAD_REQUEST
+                : HttpStatus.INTERNAL_SERVER_ERROR;
+
+        return ResponseEntity.status(status).body(response);
     }
 
 }

@@ -47,18 +47,64 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import { apiService } from '../services/apiService';
 
-const ENVIRONMENTS = ['local', 'dev', 'test','stage'];
+const DEFAULT_ENVIRONMENTS = ['local', 'dev', 'test', 'stage'];
+const DEFAULT_ENVIRONMENT_BASE_URLS = {
+  local: 'http://localhost:8081',
+  dev: 'https://capability.dev.att.com',
+  test: 'https://capability.test.att.com',
+  stage: 'https://capability.stage.att.com'
+};
 const CAPABILITIES = ['carts', 'catalog'];
 const AUTH_PROFILES = ['none', 'jwt-service', 'oauth2', 'api-key'];
+const SAMPLE_SWAGGER_SPEC = `{
+  "swagger": "2.0",
+  "info": {
+    "title": "Shopping Cart API",
+    "description": "API for managing shopping carts and products.",
+    "version": "1.0"
+  },
+  "paths": {
+    "/cart": {
+      "post": {
+        "summary": "Create a cart",
+        "responses": {
+          "201": { "description": "Cart created successfully" }
+        }
+      },
+      "get": {
+        "summary": "Get cart",
+        "responses": {
+          "200": { "description": "Cart details returned" }
+        }
+      }
+    },
+    "/cart/items": {
+      "post": {
+        "summary": "Add to cart",
+        "responses": {
+          "200": { "description": "Items added to cart successfully" }
+        }
+      }
+    }
+  }
+}`;
 
 function SmokeTestsPage({ addConsoleMessage }) {
   // Configuration state
+  const [environmentOptions, setEnvironmentOptions] = useState(DEFAULT_ENVIRONMENTS);
+  const [environmentBaseUrls, setEnvironmentBaseUrls] = useState(DEFAULT_ENVIRONMENT_BASE_URLS);
   const [environment, setEnvironment] = useState('local');
+  const [newEnvironmentName, setNewEnvironmentName] = useState('');
+  const [newEnvironmentBaseUrl, setNewEnvironmentBaseUrl] = useState('');
   const [capability, setCapability] = useState('carts');
-  const [apiVersion, setApiVersion] = useState('');
   const [specSource, setSpecSource] = useState('blob'); // 'blob' or 'upload'
   const [authRequired, setAuthRequired] = useState(true);
   const [authProfile, setAuthProfile] = useState('jwt-service');
+  const [jwtGenerationCurl, setJwtGenerationCurl] = useState('');
+  const [specUploadText, setSpecUploadText] = useState(SAMPLE_SWAGGER_SPEC);
+  const [enforceSpecOrder, setEnforceSpecOrder] = useState(true);
+  const [generatingPreview, setGeneratingPreview] = useState(false);
+  const [generatedPreview, setGeneratedPreview] = useState(null);
   
   // Test selection state
   const [testSuite, setTestSuite] = useState('contract'); // 'contract', 'workflow', 'both'
@@ -94,15 +140,43 @@ function SmokeTestsPage({ addConsoleMessage }) {
   const [runMetadata, setRunMetadata] = useState(null);
   
   const getBaseUrl = () => {
-    const envMap = {
-      'local': 'http://localhost:8081',
-      'dev': 'https://capability.dev.att.com',
-      'test': 'https://capability.test.att.com',
-      'stage': 'https://capability.stage.att.com'
-    };
-    const base = envMap[environment];
-    const versionPath = apiVersion ? `/${apiVersion}` : '';
-    return `${base}/${capability}${versionPath}`;
+    const base = environmentBaseUrls[environment] || 'http://localhost:8081';
+    return `${base}/${capability}`;
+  };
+
+  const handleEnvironmentBaseUrlChange = (value) => {
+    setEnvironmentBaseUrls((prev) => ({
+      ...prev,
+      [environment]: value
+    }));
+  };
+
+  const handleAddEnvironment = () => {
+    const normalizedName = (newEnvironmentName || '').trim().toLowerCase();
+    const normalizedBaseUrl = (newEnvironmentBaseUrl || '').trim();
+
+    if (!normalizedName) {
+      addConsoleMessage('✗ Environment name is required', 'error');
+      return;
+    }
+    if (!normalizedBaseUrl) {
+      addConsoleMessage('✗ Environment base URL is required', 'error');
+      return;
+    }
+    if (environmentOptions.includes(normalizedName)) {
+      addConsoleMessage(`✗ Environment "${normalizedName}" already exists`, 'error');
+      return;
+    }
+
+    setEnvironmentOptions((prev) => [...prev, normalizedName]);
+    setEnvironmentBaseUrls((prev) => ({
+      ...prev,
+      [normalizedName]: normalizedBaseUrl
+    }));
+    setEnvironment(normalizedName);
+    setNewEnvironmentName('');
+    setNewEnvironmentBaseUrl('');
+    addConsoleMessage(`✓ Added environment "${normalizedName}"`, 'success');
   };
 
   const getSpecFingerprint = () => {
@@ -142,6 +216,42 @@ function SmokeTestsPage({ addConsoleMessage }) {
     reader.readAsText(file);
   };
 
+  const sanitizeSpecInput = (raw) => {
+    if (!raw) {
+      return raw;
+    }
+    return raw
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join('\n')
+      .trim();
+  };
+
+  const handleGenerateTestsPreview = async () => {
+    const trimmedSpec = sanitizeSpecInput(specUploadText);
+    if (!trimmedSpec) {
+      addConsoleMessage('✗ Please paste Swagger/OpenAPI JSON or YAML first', 'error');
+      return;
+    }
+
+    setGeneratingPreview(true);
+    try {
+      addConsoleMessage('🧪 Generating smoke tests from spec...', 'info');
+      const response = await apiService.generateSmokeTestsPreview({
+        specContent: trimmedSpec,
+        enforceOrder: enforceSpecOrder
+      });
+      setGeneratedPreview(response.data);
+      addConsoleMessage(`✓ Generated ${response.data.operationCount} test(s) from spec`, 'success');
+    } catch (error) {
+      const errorMsg = error.response?.data?.error?.message || error.response?.data?.message || error.message;
+      addConsoleMessage(`✗ Failed to generate tests from spec: ${errorMsg}`, 'error');
+      setGeneratedPreview(null);
+    } finally {
+      setGeneratingPreview(false);
+    }
+  };
+
   const handleRunTests = async () => {
     setLoading(true);
     setSummary(null);
@@ -155,10 +265,10 @@ function SmokeTestsPage({ addConsoleMessage }) {
       const response = await apiService.runSmokeTests({
         environment,
         capability,
-        apiVersion,
         specSource,
         authRequired,
         authProfile,
+        jwtGenerationCurl: jwtGenerationCurl.trim() || null,
         testSuite,
         contractOptions,
         workflowFile,
@@ -192,7 +302,7 @@ function SmokeTestsPage({ addConsoleMessage }) {
       // Set error state
       setSummary({
         status: 'failed',
-        target: `${environment}/${capability}/${apiVersion}`,
+        target: `${environment}/${capability}`,
         specFingerprint: getSpecFingerprint()
       });
       setFindings([{
@@ -265,6 +375,7 @@ function SmokeTestsPage({ addConsoleMessage }) {
     setFindings(null);
     setRunMetadata(null);
     setTestSource(null);
+    setGeneratedPreview(null);
     addConsoleMessage('🔄 Results cleared', 'info');
   };
 
@@ -303,6 +414,10 @@ function SmokeTestsPage({ addConsoleMessage }) {
   };
 
   const canRunTests = () => {
+    // For pasted specs, preview generation must happen first.
+    if (specSource === 'upload' && !generatedPreview) {
+      return false;
+    }
     // Contract Smoke only → no workflow required
     if (testSuite === 'contract') {
       return true;
@@ -385,8 +500,474 @@ function SmokeTestsPage({ addConsoleMessage }) {
     return <Chip label={config.label} color={config.color} size="small" />;
   };
 
+  const getAuthCurlHeader = () => {
+    if (!authRequired) return '';
+    if (authProfile === 'api-key') {
+      return '-H "x-api-key: $SMOKE_API_KEY"';
+    }
+    return '-H "Authorization: Bearer $SMOKE_TOKEN"';
+  };
+
+  const buildCurlCommand = (test) => {
+    const method = (test?.method || 'GET').toUpperCase();
+    const path = test?.path || '/';
+    const url = `${getBaseUrl()}${path}`;
+    const authHeader = getAuthCurlHeader();
+    const needsBody = ['POST', 'PUT', 'PATCH'].includes(method);
+    const bodyFlag = needsBody ? '-H "Content-Type: application/json" -d \'{}\'' : '';
+
+    return [
+      'curl -sS',
+      `-X ${method}`,
+      authHeader,
+      bodyFlag,
+      `"${url}"`,
+      '-w "\\nHTTP %{http_code}\\n"'
+    ].filter(Boolean).join(' ');
+  };
+
+  const generatedCurlCommands = (generatedPreview?.tests || []).map((test, index) => {
+    const testName = test?.name || test?.operationId || `test-${index + 1}`;
+    return `# ${index + 1}. ${testName}\n${buildCurlCommand(test)}`;
+  });
+
+  const generatedCurlCommandsText = generatedCurlCommands.length > 0
+    ? generatedCurlCommands.join('\n\n')
+    : 'Generate tests preview to produce curl commands.';
+
+  const downloadCurlCollection = () => {
+    if (generatedCurlCommands.length === 0) {
+      addConsoleMessage('⚠ No generated curl commands. Generate tests preview first.', 'warning');
+      return;
+    }
+
+    const scriptLines = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      '',
+      `# Generated curl smoke collection`,
+      `# Target: ${getBaseUrl()}`,
+      authRequired
+        ? (authProfile === 'api-key'
+            ? '# Requires: export SMOKE_API_KEY=<your-api-key>'
+            : '# Requires: export SMOKE_TOKEN=<bearer-token>')
+        : '# No auth header required',
+      '',
+      generatedCurlCommandsText,
+      ''
+    ];
+
+    const data = scriptLines.join('\n');
+    const blob = new Blob([data], { type: 'text/x-shellscript' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `curl-collection-${environment}-${capability}-${Date.now()}.sh`;
+    link.click();
+    URL.revokeObjectURL(url);
+    addConsoleMessage('✓ Downloaded curl collection script', 'success');
+  };
+
+  const generatedFiles = [];
+  if (generatedCurlCommands.length > 0) {
+    generatedFiles.push(`curl-collection-${environment}-${capability}.sh`);
+    generatedFiles.push(`curl-collection-${environment}-${capability}.txt`);
+  }
+  if (summary && results) {
+    generatedFiles.push(`smoke-tests-${environment}-${capability}.json`);
+  }
+  const generatedFilesText = generatedFiles.length > 0
+    ? generatedFiles.join('\n')
+    : 'No generated files yet.';
+
+  const renderResultsPanel = () => (
+    <>
+      {/* Empty State */}
+      {!summary && !generatedPreview && !loading && (
+        <Alert severity="info" icon={<InfoIcon />}>
+          Configure environment/capability and click Run to execute smoke tests.
+        </Alert>
+      )}
+
+      {/* Loading State */}
+      {loading && (
+        <Paper elevation={2} sx={{ p: 4, textAlign: 'center' }}>
+          <CircularProgress size={60} sx={{ mb: 2 }} />
+          <Typography variant="h6" sx={{ mb: 1 }}>
+            Executing Smoke Tests
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {testSuite === 'contract' && 'Executing contract checks...'}
+            {testSuite === 'workflow' && 'Running workflow steps...'}
+            {testSuite === 'both' && 'Executing contract checks and workflow steps...'}
+          </Typography>
+        </Paper>
+      )}
+
+      {generatedPreview && !loading && (
+        <Paper elevation={2} sx={{ p: 3, mb: 2 }}>
+          <Typography variant="h6" sx={{ mb: 1.5, fontWeight: 600 }}>
+            Generated Tests Preview
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {generatedPreview.title} · {generatedPreview.operationCount} operation(s)
+            {generatedPreview.orderEnforced ? ' · ordered by dependencies' : ' · source order'}
+          </Typography>
+
+          {generatedPreview.warnings && generatedPreview.warnings.length > 0 && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {generatedPreview.warnings.join(' | ')}
+            </Alert>
+          )}
+
+          {generatedPreview.tests && generatedPreview.tests.length > 0 ? (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Order</TableCell>
+                  <TableCell>Test</TableCell>
+                  <TableCell>Method</TableCell>
+                  <TableCell>Path</TableCell>
+                  <TableCell>Expected</TableCell>
+                  <TableCell>Depends On</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {generatedPreview.tests.map((test) => (
+                  <TableRow key={test.testId}>
+                    <TableCell>{test.executionOrder}</TableCell>
+                    <TableCell>{test.name}</TableCell>
+                    <TableCell>
+                      <Chip
+                        label={test.method}
+                        size="small"
+                        color={test.method === 'POST' ? 'primary' : 'default'}
+                        variant={test.method === 'POST' ? 'filled' : 'outlined'}
+                      />
+                    </TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{test.path}</TableCell>
+                    <TableCell>{test.expectedStatus}</TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>
+                      {test.dependsOn && test.dependsOn.length > 0 ? test.dependsOn.join(', ') : '-'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+              No generated tests.
+            </Typography>
+          )}
+        </Paper>
+      )}
+
+      {/* Summary Card */}
+      {summary && !loading && (
+        <>
+          <Paper elevation={2} sx={{ p: 3, mb: 2 }}>
+            <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+              Summary
+            </Typography>
+
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}>
+                <Typography variant="caption" color="text.secondary">Status</Typography>
+                <Box sx={{ mt: 0.5 }}>
+                  {getStatusChip(summary.status)}
+                </Box>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="caption" color="text.secondary">Target</Typography>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', mt: 0.5 }}>
+                  {summary.target}
+                </Typography>
+              </Grid>
+              <Grid item xs={12} md={4}>
+                <Typography variant="caption" color="text.secondary">Spec Fingerprint</Typography>
+                <Tooltip title={summary.specFingerprint}>
+                  <Typography variant="body2" sx={{
+                    fontFamily: 'monospace',
+                    fontSize: '0.75rem',
+                    mt: 0.5,
+                    maxWidth: '200px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {summary.specFingerprint}
+                  </Typography>
+                </Tooltip>
+              </Grid>
+            </Grid>
+
+            {testSource && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                  Test Source
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Type</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                      {testSource.type}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Spec Fingerprint</Typography>
+                    <Tooltip title={testSource.fingerprint}>
+                      <Typography variant="body2" sx={{
+                        fontFamily: 'monospace',
+                        fontSize: '0.75rem',
+                        maxWidth: '150px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {testSource.fingerprint}
+                      </Typography>
+                    </Tooltip>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Generated At</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                      {new Date(testSource.generatedAt).toLocaleString()}
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+            )}
+
+            {runMetadata && (
+              <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                  Run Metadata
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Run ID</Typography>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                      {runMetadata.runId || 'N/A'}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Start Time</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                      {runMetadata.startTime ? new Date(runMetadata.startTime).toLocaleString() : 'N/A'}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Duration</Typography>
+                    <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                      {runMetadata.duration || 'N/A'}
+                    </Typography>
+                  </Box>
+                </Box>
+              </Box>
+            )}
+          </Paper>
+
+          {findings && findings.length > 0 && (
+            <Paper elevation={2} sx={{ p: 3, mb: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                Findings
+              </Typography>
+
+              {findings.map((finding, idx) => (
+                <Alert
+                  key={idx}
+                  severity={getSeverityColor(finding.severity)}
+                  icon={getSeverityIcon(finding.severity)}
+                  sx={{ mb: 2 }}
+                >
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                    {finding.title}
+                  </Typography>
+                  <Typography variant="body2" sx={{ mb: 1 }}>
+                    {finding.message}
+                  </Typography>
+                </Alert>
+              ))}
+            </Paper>
+          )}
+
+          <Paper elevation={2} sx={{ mb: 2 }}>
+            <Accordion defaultExpanded>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  Contract Smoke Results
+                </Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                {results?.contractTests && results.contractTests.length > 0 ? (
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Test</TableCell>
+                        <TableCell>Operation ID</TableCell>
+                        <TableCell>Expected</TableCell>
+                        <TableCell>Actual</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Duration</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {results.contractTests.map((test, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{test.name}</TableCell>
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
+                            {test.operationId}
+                          </TableCell>
+                          <TableCell>{test.expected}</TableCell>
+                          <TableCell>{test.actual}</TableCell>
+                          <TableCell>
+                            <Chip
+                              label={test.status}
+                              color={test.status === 'PASS' ? 'success' : 'error'}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell>{test.duration}ms</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', textAlign: 'center', py: 2 }}>
+                    No contract test results available.
+                  </Typography>
+                )}
+              </AccordionDetails>
+            </Accordion>
+          </Paper>
+        </>
+      )}
+    </>
+  );
+
+  const renderGeneratedFilesPanel = () => (
+    <>
+      <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+        Generated Files
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Files generated from the latest smoke test operation.
+      </Typography>
+
+      {!summary && !generatedPreview && !loading && (
+        <Alert severity="info" icon={<InfoIcon />} sx={{ fontSize: '0.85rem' }}>
+          Run tests or generate a preview to materialize generated artifacts.
+        </Alert>
+      )}
+
+      {loading && (
+        <Box sx={{ textAlign: 'center', py: 2 }}>
+          <CircularProgress size={40} sx={{ mb: 1.5 }} />
+          <Typography variant="body2" color="text.secondary">
+            Executing tests and generating artifacts...
+          </Typography>
+        </Box>
+      )}
+
+      {generatedPreview && (
+        <Card elevation={0} sx={{ border: 1, borderColor: 'divider', mb: 2 }}>
+          <CardContent>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              curl-collection.sh
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {generatedPreview.operationCount} generated curl commands
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1, fontSize: '0.82rem' }}>
+              Postman-like runnable set generated from current preview order.
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+              <Button
+                size="small"
+                variant="contained"
+                sx={{ textTransform: 'none' }}
+                onClick={handleRunTests}
+                disabled={loading || !canRunTests()}
+              >
+                Run Generated Set
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                sx={{ textTransform: 'none' }}
+                startIcon={<DownloadIcon />}
+                onClick={downloadCurlCollection}
+              >
+                Download curl collection
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+      )}
+
+      {summary && (
+        <Card elevation={0} sx={{ border: 1, borderColor: 'divider' }}>
+          <CardContent>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              smoke-test-results.json
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Execution summary, findings, and run metadata
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              sx={{ mt: 1, textTransform: 'none' }}
+              startIcon={<DownloadIcon />}
+              onClick={handleExport}
+              disabled={!summary || !results}
+            >
+              Download execution artifact
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <TextField
+        fullWidth
+        label="Generated Files List"
+        value={generatedFilesText}
+        multiline
+        minRows={4}
+        InputProps={{ readOnly: true }}
+        sx={{ mt: 2 }}
+      />
+      <TextField
+        fullWidth
+        label="Generated cURL Commands"
+        value={generatedCurlCommandsText}
+        multiline
+        minRows={8}
+        maxRows={18}
+        InputProps={{ readOnly: true }}
+        sx={{
+          mt: 2,
+          '& .MuiInputBase-inputMultiline': {
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            fontSize: '0.78rem'
+          }
+        }}
+      />
+    </>
+  );
+
   return (
-    <Container maxWidth="xl" sx={{ mt: 3, pb: 3 }}>
+    <Container
+      maxWidth={false}
+      sx={{
+        mt: 3,
+        pb: 3,
+        px: { xs: 2, sm: 2.5, md: 3 },
+        width: '100%',
+        maxWidth: '100%',
+        overflowX: 'hidden'
+      }}
+    >
       {/* Page Header */}
       <Box sx={{ mb: 3 }}>
         <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
@@ -397,65 +978,87 @@ function SmokeTestsPage({ addConsoleMessage }) {
         </Typography>
       </Box>
 
-      <Grid container spacing={3}>
+      <Paper elevation={2} sx={{ p: 3 }}>
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: '1fr',
+              lg: 'minmax(560px, 1.05fr) minmax(0, 1.95fr)'
+            },
+            width: '100%',
+            minWidth: 0,
+            gap: 3,
+            alignItems: 'flex-start'
+          }}
+        >
         {/* Left Column - Configuration */}
-        <Grid item xs={12} md={4}>
+        <Box sx={{ minWidth: 0 }}>
           {/* Configuration Card */}
-          <Paper elevation={2} sx={{ p: 3, mb: 2 }}>
+          <Box sx={{ minWidth: 0, width: '100%' }}>
             <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
               Smoke Test Configuration
             </Typography>
 
             {/* Section A - Target */}
-            <Box sx={{ mb: 3 }}>
+            <Box sx={{ mb: 3, width: '100%' }}>
               <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'text.secondary' }}>
                 Target
               </Typography>
               
-              <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel>Environment</InputLabel>
-                <Select
-                  value={environment}
-                  onChange={(e) => setEnvironment(e.target.value)}
-                  label="Environment"
-                  disabled={loading}
-                >
-                  {ENVIRONMENTS.map(env => (
-                    <MenuItem key={env} value={env}>{env}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <Grid container spacing={1.5} sx={{ mb: 1.5 }}>
+                <Grid item xs={12} md={4}>
+                  <FormControl fullWidth>
+                    <InputLabel>Environment</InputLabel>
+                    <Select
+                      value={environment}
+                      onChange={(e) => setEnvironment(e.target.value)}
+                      label="Environment"
+                      disabled={loading}
+                    >
+                      {environmentOptions.map(env => (
+                        <MenuItem key={env} value={env}>{env}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={8}>
+                  <TextField
+                    fullWidth
+                    label="Environment Base URL"
+                    value={environmentBaseUrls[environment] || ''}
+                    onChange={(e) => handleEnvironmentBaseUrlChange(e.target.value)}
+                    disabled={loading}
+                    placeholder="https://my-env.company.com"
+                    helperText="Used to construct the target URL for this environment"
+                  />
+                </Grid>
+              </Grid>
 
-              <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel>Capability</InputLabel>
-                <Select
-                  value={capability}
-                  onChange={(e) => setCapability(e.target.value)}
-                  label="Capability"
-                  disabled={loading}
-                >
-                  {CAPABILITIES.map(cap => (
-                    <MenuItem key={cap} value={cap}>{cap}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              <TextField
-                fullWidth
-                label="API Version"
-                value={apiVersion}
-                onChange={(e) => setApiVersion(e.target.value)}
-                disabled={loading}
-                placeholder="e.g., v1, v2, latest"
-                helperText="Leave empty for root path"
-                sx={{ mb: 1 }}
-              />
-
-              <Alert severity="info" sx={{ mt: 1 }}>
-                <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                  Base URL: {getBaseUrl()}
-                </Typography>
-              </Alert>
+              <Grid container spacing={1.5} alignItems="stretch">
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Capability</InputLabel>
+                    <Select
+                      value={capability}
+                      onChange={(e) => setCapability(e.target.value)}
+                      label="Capability"
+                      disabled={loading}
+                    >
+                      {CAPABILITIES.map(cap => (
+                        <MenuItem key={cap} value={cap}>{cap}</MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Alert severity="info" sx={{ height: '100%', display: 'flex', alignItems: 'center' }}>
+                    <Typography variant="caption" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                      Base URL: {getBaseUrl()}
+                    </Typography>
+                  </Alert>
+                </Grid>
+              </Grid>
             </Box>
 
             {/* Section B - Spec Source */}
@@ -469,25 +1072,31 @@ function SmokeTestsPage({ addConsoleMessage }) {
                 exclusive
                 onChange={(e, val) => val && setSpecSource(val)}
                 fullWidth
-                sx={{ mb: 2 }}
+                sx={{
+                  mb: 2,
+                  width: '100%',
+                  '& .MuiToggleButton-root': {
+                    flex: 1
+                  }
+                }}
                 disabled={loading}
               >
-                <ToggleButton value="blob">
+                <ToggleButton value="blob" sx={{ flex: 1, minWidth: 0 }}>
                   From Blob (recommended)
                 </ToggleButton>
-                <ToggleButton value="upload">
+                <ToggleButton value="upload" sx={{ flex: 1, minWidth: 0 }}>
                   Local Upload
                 </ToggleButton>
               </ToggleButtonGroup>
 
               {specSource === 'blob' && (
-                <>
+                <Box sx={{ width: '100%' }}>
                   <TextField
                     fullWidth
                     label="OpenAPI Spec Path"
-                    value={`/specs/${capability}/openapi-${apiVersion}.yaml`}
+                    value={`/specs/${capability}/openapi.yaml`}
                     disabled
-                    sx={{ mb: 1 }}
+                    sx={{ mb: 1, width: '100%' }}
                     size="small"
                   />
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -521,16 +1130,104 @@ function SmokeTestsPage({ addConsoleMessage }) {
                       <ContentCopyIcon sx={{ fontSize: '0.9rem' }} />
                     </IconButton>
                   </Box>
-                </>
+                </Box>
+              )}
+
+              {specSource === 'upload' && (
+                <Box sx={{ width: '100%' }}>
+                  <TextField
+                    fullWidth
+                    label="Paste Swagger/OpenAPI (JSON or YAML)"
+                    value={specUploadText}
+                    onChange={(e) => {
+                      setSpecUploadText(e.target.value);
+                      setGeneratedPreview(null);
+                    }}
+                    disabled={loading || generatingPreview}
+                    multiline
+                    minRows={8}
+                    maxRows={16}
+                    sx={{
+                      mb: 1.5,
+                      minWidth: 0,
+                      width: '100%',
+                      '& .MuiInputBase-inputMultiline': {
+                        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                        whiteSpace: 'pre-wrap',
+                        overflowWrap: 'anywhere',
+                        wordBreak: 'break-word'
+                      }
+                    }}
+                    helperText="Paste raw spec text. Lines starting with // are ignored."
+                  />
+                  <FormControlLabel
+                    control={(
+                      <Checkbox
+                        checked={enforceSpecOrder}
+                        onChange={(e) => {
+                          setEnforceSpecOrder(e.target.checked);
+                          setGeneratedPreview(null);
+                        }}
+                        disabled={loading || generatingPreview}
+                        size="small"
+                      />
+                    )}
+                    label="Enforce dependency order (create before dependent operations)"
+                    sx={{ mb: 0.5 }}
+                  />
+                </Box>
               )}
             </Box>
 
-            {/* Section C - Auth */}
-            <Box sx={{ mb: 3 }}>
+          </Box>
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Box sx={{ p: 0, width: '100%', overflow: 'auto' }}>
+            <Box sx={{ p: 1.5, mb: 2, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                Add Environment
+              </Typography>
+              <Grid container spacing={1}>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Name"
+                    value={newEnvironmentName}
+                    onChange={(e) => setNewEnvironmentName(e.target.value)}
+                    disabled={loading}
+                    placeholder="prod"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Base URL"
+                    value={newEnvironmentBaseUrl}
+                    onChange={(e) => setNewEnvironmentBaseUrl(e.target.value)}
+                    disabled={loading}
+                    placeholder="https://capability.prod.att.com"
+                  />
+                </Grid>
+                <Grid item xs={12} md={2}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    onClick={handleAddEnvironment}
+                    disabled={loading}
+                    sx={{ height: '40px', textTransform: 'none' }}
+                  >
+                    Add
+                  </Button>
+                </Grid>
+              </Grid>
+            </Box>
+
+            <Box sx={{ mb: 2.5, p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
               <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, color: 'text.secondary' }}>
                 Authentication
               </Typography>
-              
               <FormControlLabel
                 control={
                   <Switch
@@ -540,7 +1237,7 @@ function SmokeTestsPage({ addConsoleMessage }) {
                   />
                 }
                 label="Auth Required"
-                sx={{ mb: 2 }}
+                sx={{ mb: 1 }}
               />
 
               {authRequired && (
@@ -558,6 +1255,28 @@ function SmokeTestsPage({ addConsoleMessage }) {
                       ))}
                     </Select>
                   </FormControl>
+                  {authProfile === 'jwt-service' && (
+                    <TextField
+                      fullWidth
+                      multiline
+                      minRows={3}
+                      maxRows={8}
+                      label="JWT Generation cURL (optional)"
+                      value={jwtGenerationCurl}
+                      onChange={(e) => setJwtGenerationCurl(e.target.value)}
+                      disabled={loading}
+                      placeholder='curl -X POST "https://auth.example.com/token" -H "Content-Type: application/x-www-form-urlencoded" -d "..."'
+                      helperText="Paste your token-generation curl command. This is sent with the run config."
+                      sx={{
+                        mt: 1,
+                        mb: 1,
+                        '& .MuiInputBase-inputMultiline': {
+                          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                          fontSize: '0.8rem'
+                        }
+                      }}
+                    />
+                  )}
                   <Typography variant="caption" color="text.secondary">
                     Acquire token once per run; cached & refreshed automatically.
                   </Typography>
@@ -565,681 +1284,402 @@ function SmokeTestsPage({ addConsoleMessage }) {
               )}
             </Box>
 
-            {/* Action Buttons */}
-            <Box sx={{ display: 'flex', gap: 1, flexDirection: 'column' }}>
-              {/* Workflow Required Warning */}
-              {isWorkflowRequired() && !isWorkflowConfigured() && (
-                <Alert severity="warning" icon={<WarningIcon />} sx={{ py: 0.5, fontSize: '0.85rem' }}>
-                  <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                    Workflow smoke requires a workflow definition.
+            <Grid container spacing={2} sx={{ mb: 2.5 }}>
+              <Grid item xs={12} xl={8}>
+                <Paper variant="outlined" sx={{ p: 2 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                    Test Suite
                   </Typography>
-                  <Typography variant="caption" sx={{ display: 'block', mt: 0.25 }}>
-                    Select a catalog workflow or upload YAML to continue.
-                  </Typography>
-                </Alert>
-              )}
 
-              <Button
-                variant="contained"
-                size="large"
-                fullWidth
-                startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <PlayArrowIcon />}
-                onClick={handleRunTests}
-                disabled={loading || !canRunTests()}
-              >
-                {loading ? 'Running...' : 'Run Smoke Tests'}
-                {isWorkflowRequired() && !isWorkflowConfigured() && (
-                  <Chip 
-                    label="Workflow Required" 
-                    size="small" 
-                    color="warning"
-                    sx={{ ml: 1, height: 20, fontSize: '0.7rem' }}
-                  />
-                )}
-              </Button>
-              
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'space-between', alignItems: 'center' }}>
-                <Button
-                  size="small"
-                  onClick={handleValidateConfig}
-                  disabled={loading}
-                  sx={{ textTransform: 'none' }}
-                >
-                  Validate Configuration
-                </Button>
-                <Button
-                  size="small"
-                  startIcon={<RestartAltIcon />}
-                  onClick={handleReset}
-                  disabled={loading}
-                  sx={{ textTransform: 'none' }}
-                >
-                  Reset
-                </Button>
-              </Box>
-            </Box>
-          </Paper>
-
-          {/* Test Suite Selection Card */}
-          <Paper elevation={2} sx={{ p: 3 }}>
-            <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-              Test Suite
-            </Typography>
-
-            {/* Horizontal Segmented Control */}
-            <ToggleButtonGroup
-              value={testSuite}
-              exclusive
-              onChange={(e, val) => val && setTestSuite(val)}
-              fullWidth
-              sx={{ mb: 3 }}
-              disabled={loading}
-            >
-              <ToggleButton value="contract" sx={{ py: 1 }}>
-                Contract Smoke
-              </ToggleButton>
-              <ToggleButton value="workflow" sx={{ py: 1 }}>
-                Workflow Smoke
-              </ToggleButton>
-              <ToggleButton value="both" sx={{ py: 1 }}>
-                Both
-              </ToggleButton>
-            </ToggleButtonGroup>
-
-            {/* Contract Smoke Options */}
-            {(testSuite === 'contract' || testSuite === 'both') && (
-              <Box sx={{ mb: testSuite === 'both' ? 3 : 0, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
-                  Contract Smoke Options
-                </Typography>
-                <FormGroup>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={contractOptions.happyPaths}
-                        onChange={(e) => setContractOptions({...contractOptions, happyPaths: e.target.checked})}
-                        disabled={loading}
-                      />
-                    }
-                    label="Happy paths (200/201 + schema validation)"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={contractOptions.negativeAuth}
-                        onChange={(e) => setContractOptions({...contractOptions, negativeAuth: e.target.checked})}
-                        disabled={loading}
-                      />
-                    }
-                    label="Negative auth (401/403)"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={contractOptions.basic400}
-                        onChange={(e) => setContractOptions({...contractOptions, basic400: e.target.checked})}
-                        disabled={loading}
-                      />
-                    }
-                    label="Basic 400 validations"
-                  />
-                  
-                  <Button
-                    size="small"
-                    onClick={() => setContractOptions({...contractOptions, advancedOptions: !contractOptions.advancedOptions})}
-                    endIcon={contractOptions.advancedOptions ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                    sx={{ mt: 1, justifyContent: 'flex-start', textTransform: 'none' }}
+                  <ToggleButtonGroup
+                    value={testSuite}
+                    exclusive
+                    onChange={(e, val) => val && setTestSuite(val)}
+                    fullWidth
+                    sx={{ mb: 2 }}
+                    disabled={loading}
                   >
-                    Advanced
-                  </Button>
-                  
-                  <Collapse in={contractOptions.advancedOptions}>
-                    <Box sx={{ pl: 2, mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={contractOptions.strictSchemaValidation}
-                            onChange={(e) => setContractOptions({...contractOptions, strictSchemaValidation: e.target.checked})}
-                            disabled={loading}
-                            size="small"
-                          />
-                        }
-                        label="Strict schema validation"
-                      />
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={contractOptions.failFast}
-                            onChange={(e) => setContractOptions({...contractOptions, failFast: e.target.checked})}
-                            disabled={loading}
-                            size="small"
-                          />
-                        }
-                        label="Fail fast on first error"
-                      />
+                    <ToggleButton value="contract" sx={{ py: 1 }}>
+                      Contract Smoke
+                    </ToggleButton>
+                    <ToggleButton value="workflow" sx={{ py: 1 }}>
+                      Workflow Smoke
+                    </ToggleButton>
+                    <ToggleButton value="both" sx={{ py: 1 }}>
+                      Both
+                    </ToggleButton>
+                  </ToggleButtonGroup>
 
-                      {/* Test Generation Section */}
-                      <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                        <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, fontSize: '0.85rem' }}>
-                          Test Generation
-                        </Typography>
-                        
-                        <Box sx={{ mb: 1 }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                              Contract fingerprint:
-                            </Typography>
-                            <Tooltip title={getSpecFingerprint()}>
-                              <Typography 
-                                variant="caption" 
-                                sx={{ 
-                                  fontFamily: 'monospace',
-                                  fontSize: '0.65rem',
-                                  maxWidth: '150px',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                  bgcolor: 'grey.200',
-                                  px: 0.5,
-                                  py: 0.25,
-                                  borderRadius: 0.5
-                                }}
-                              >
-                                {getSpecFingerprint()}
-                              </Typography>
-                            </Tooltip>
-                          </Box>
-                          
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                              Generated test set:
-                            </Typography>
-                            <Chip 
-                              label={cachedTestsStatus === 'present' ? 'Present (cached)' : cachedTestsStatus === 'outdated' ? 'Outdated' : 'None'}
-                              size="small"
-                              color={cachedTestsStatus === 'present' ? 'success' : cachedTestsStatus === 'outdated' ? 'warning' : 'default'}
-                              sx={{ height: 18, fontSize: '0.7rem' }}
+                  {(testSuite === 'contract' || testSuite === 'both') && (
+                    <Box sx={{ mb: testSuite === 'both' ? 2 : 0, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+                        Contract Smoke Options
+                      </Typography>
+                      <FormGroup>
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={contractOptions.happyPaths}
+                              onChange={(e) => setContractOptions({...contractOptions, happyPaths: e.target.checked})}
+                              disabled={loading}
                             />
+                          }
+                          label="Happy paths (200/201 + schema validation)"
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={contractOptions.negativeAuth}
+                              onChange={(e) => setContractOptions({...contractOptions, negativeAuth: e.target.checked})}
+                              disabled={loading}
+                            />
+                          }
+                          label="Negative auth (401/403)"
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={contractOptions.basic400}
+                              onChange={(e) => setContractOptions({...contractOptions, basic400: e.target.checked})}
+                              disabled={loading}
+                            />
+                          }
+                          label="Basic 400 validations"
+                        />
+
+                        <Button
+                          size="small"
+                          onClick={() => setContractOptions({...contractOptions, advancedOptions: !contractOptions.advancedOptions})}
+                          endIcon={contractOptions.advancedOptions ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                          sx={{ mt: 1, justifyContent: 'flex-start', textTransform: 'none' }}
+                        >
+                          Advanced
+                        </Button>
+
+                        <Collapse in={contractOptions.advancedOptions}>
+                          <Box sx={{ pl: 2, mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
+                            <FormControlLabel
+                              control={
+                                <Checkbox
+                                  checked={contractOptions.strictSchemaValidation}
+                                  onChange={(e) => setContractOptions({...contractOptions, strictSchemaValidation: e.target.checked})}
+                                  disabled={loading}
+                                  size="small"
+                                />
+                              }
+                              label="Strict schema validation"
+                            />
+                            <FormControlLabel
+                              control={
+                                <Checkbox
+                                  checked={contractOptions.failFast}
+                                  onChange={(e) => setContractOptions({...contractOptions, failFast: e.target.checked})}
+                                  disabled={loading}
+                                  size="small"
+                                />
+                              }
+                              label="Fail fast on first error"
+                            />
+
+                            <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                              <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600, fontSize: '0.85rem' }}>
+                                Test Generation
+                              </Typography>
+
+                              <Box sx={{ mb: 1 }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                                    Contract fingerprint:
+                                  </Typography>
+                                  <Tooltip title={getSpecFingerprint()}>
+                                    <Typography
+                                      variant="caption"
+                                      sx={{
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.65rem',
+                                        maxWidth: '150px',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                        bgcolor: 'grey.200',
+                                        px: 0.5,
+                                        py: 0.25,
+                                        borderRadius: 0.5
+                                      }}
+                                    >
+                                      {getSpecFingerprint()}
+                                    </Typography>
+                                  </Tooltip>
+                                </Box>
+
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                                    Generated test set:
+                                  </Typography>
+                                  <Chip
+                                    label={cachedTestsStatus === 'present' ? 'Present (cached)' : cachedTestsStatus === 'outdated' ? 'Outdated' : 'None'}
+                                    size="small"
+                                    color={cachedTestsStatus === 'present' ? 'success' : cachedTestsStatus === 'outdated' ? 'warning' : 'default'}
+                                    sx={{ height: 18, fontSize: '0.7rem' }}
+                                  />
+                                </Box>
+                              </Box>
+
+                              <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  onClick={handleRegenerateTests}
+                                  disabled={loading}
+                                  sx={{ textTransform: 'none', fontSize: '0.75rem', py: 0.5 }}
+                                >
+                                  Regenerate Tests
+                                </Button>
+                                <Button
+                                  variant="outlined"
+                                  size="small"
+                                  onClick={handleLoadCachedTests}
+                                  disabled={loading || cachedTestsStatus === 'none'}
+                                  sx={{ textTransform: 'none', fontSize: '0.75rem', py: 0.5 }}
+                                >
+                                  Load Cached Tests
+                                </Button>
+                              </Box>
+
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, fontSize: '0.7rem', fontStyle: 'italic' }}>
+                                Tests are auto-generated from OpenAPI spec and cached locally.
+                              </Typography>
+                            </Box>
                           </Box>
-                        </Box>
+                        </Collapse>
+                      </FormGroup>
+                    </Box>
+                  )}
 
-                        <Box sx={{ display: 'flex', gap: 1, mt: 1.5 }}>
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={handleRegenerateTests}
-                            disabled={loading}
-                            sx={{ textTransform: 'none', fontSize: '0.75rem', py: 0.5 }}
-                          >
-                            Regenerate Tests
-                          </Button>
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={handleLoadCachedTests}
-                            disabled={loading || cachedTestsStatus === 'none'}
-                            sx={{ textTransform: 'none', fontSize: '0.75rem', py: 0.5 }}
-                          >
-                            Load Cached Tests
-                          </Button>
-                        </Box>
+                  {testSuite === 'both' && (
+                    <Box sx={{ my: 2, borderTop: 1, borderColor: 'divider' }} />
+                  )}
 
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, fontSize: '0.7rem', fontStyle: 'italic' }}>
-                          Tests are auto-generated from OpenAPI spec and cached locally.
+                  {(testSuite === 'workflow' || testSuite === 'both') && (
+                    <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
+                        Workflow Configuration
+                      </Typography>
+
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                        Workflow Source
+                      </Typography>
+                      <ToggleButtonGroup
+                        value={workflowSource}
+                        exclusive
+                        onChange={(e, val) => val && setWorkflowSource(val)}
+                        fullWidth
+                        sx={{ mb: 2 }}
+                        disabled={loading}
+                        size="small"
+                      >
+                        <ToggleButton value="catalog">
+                          From Repository / Catalog (recommended)
+                        </ToggleButton>
+                        <ToggleButton value="upload">
+                          Upload YAML (ad-hoc)
+                        </ToggleButton>
+                      </ToggleButtonGroup>
+
+                      {workflowSource === 'catalog' && (
+                        <>
+                          <FormControl fullWidth sx={{ mb: 1 }}>
+                            <InputLabel size="small">Workflow</InputLabel>
+                            <Select
+                              value={workflowFile}
+                              onChange={(e) => setWorkflowFile(e.target.value)}
+                              label="Workflow"
+                              size="small"
+                              disabled={loading}
+                            >
+                              <MenuItem value="cart-lifecycle-smoke">cart-lifecycle-smoke</MenuItem>
+                              <MenuItem value="cart-item-mutation-smoke">cart-item-mutation-smoke</MenuItem>
+                              <MenuItem value="checkout-flow-smoke">checkout-flow-smoke</MenuItem>
+                              <MenuItem value="user-journey-smoke">user-journey-smoke</MenuItem>
+                            </Select>
+                          </FormControl>
+
+                          <Alert severity="info" icon={<InfoIcon fontSize="small" />} sx={{ fontSize: '0.8rem', py: 0.5, mb: 1.5 }}>
+                            <Typography variant="caption">
+                              Steps: 4 (create → get → patch → delete)
+                            </Typography>
+                          </Alert>
+                        </>
+                      )}
+
+                      {workflowSource === 'upload' && (
+                        <>
+                          <Box
+                            sx={{
+                              border: 2,
+                              borderStyle: 'dashed',
+                              borderColor: workflowValidation?.status === 'success' ? 'success.main' : workflowValidation?.status === 'error' ? 'error.main' : 'grey.300',
+                              borderRadius: 1,
+                              p: 2,
+                              mb: 1,
+                              textAlign: 'center',
+                              bgcolor: 'background.paper',
+                              cursor: 'pointer',
+                              '&:hover': {
+                                bgcolor: 'grey.50'
+                              }
+                            }}
+                            onClick={() => document.getElementById('workflow-file-input').click()}
+                          >
+                            <input
+                              id="workflow-file-input"
+                              type="file"
+                              accept=".yaml,.yml"
+                              onChange={handleWorkflowFileUpload}
+                              style={{ display: 'none' }}
+                              disabled={loading}
+                            />
+                            <UploadFileIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
+                            <Typography variant="body2" sx={{ mb: 0.5 }}>
+                              Drop workflow YAML here or click to choose file
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Accepts .yaml or .yml files
+                            </Typography>
+                          </Box>
+
+                          {workflowValidation && (
+                            <Alert
+                              severity={workflowValidation.status}
+                              sx={{ mb: 1, fontSize: '0.85rem', py: 0.5 }}
+                            >
+                              {workflowValidation.message}
+                            </Alert>
+                          )}
+
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5, fontStyle: 'italic' }}>
+                            Workflow YAML defines ordered steps by operationId, capture/bind variables, and cleanup behavior.
+                          </Typography>
+
+                          {workflowYaml && workflowValidation?.status === 'success' && (
+                            <FormControlLabel
+                              control={
+                                <Checkbox
+                                  checked={saveToLocalCatalog}
+                                  onChange={(e) => setSaveToLocalCatalog(e.target.checked)}
+                                  disabled={loading}
+                                  size="small"
+                                />
+                              }
+                              label={<Typography variant="caption">Save to local catalog for reuse</Typography>}
+                            />
+                          )}
+                        </>
+                      )}
+
+                      <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              checked={alwaysCleanup}
+                              onChange={(e) => setAlwaysCleanup(e.target.checked)}
+                              disabled={loading}
+                            />
+                          }
+                          label="Always attempt cleanup"
+                        />
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 4, mt: 0.5, fontStyle: 'italic' }}>
+                          Run cleanup steps (e.g., delete resources) even if the workflow fails.
                         </Typography>
                       </Box>
                     </Box>
-                  </Collapse>
-                </FormGroup>
-              </Box>
-            )}
+                  )}
+                </Paper>
+              </Grid>
 
-            {/* Divider between Contract and Workflow when Both is selected */}
-            {testSuite === 'both' && (
-              <Box sx={{ my: 2, borderTop: 1, borderColor: 'divider' }} />
-            )}
-
-            {/* Workflow Configuration */}
-            {(testSuite === 'workflow' || testSuite === 'both') && (
-              <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
-                  Workflow Configuration
-                </Typography>
-                
-                {/* Workflow Source Toggle */}
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                  Workflow Source
-                </Typography>
-                <ToggleButtonGroup
-                  value={workflowSource}
-                  exclusive
-                  onChange={(e, val) => val && setWorkflowSource(val)}
-                  fullWidth
-                  sx={{ mb: 2 }}
-                  disabled={loading}
-                  size="small"
-                >
-                  <ToggleButton value="catalog">
-                    From Repository / Catalog (recommended)
-                  </ToggleButton>
-                  <ToggleButton value="upload">
-                    Upload YAML (ad-hoc)
-                  </ToggleButton>
-                </ToggleButtonGroup>
-
-                {/* From Catalog */}
-                {workflowSource === 'catalog' && (
-                  <>
-                    <FormControl fullWidth sx={{ mb: 1 }}>
-                      <InputLabel size="small">Workflow</InputLabel>
-                      <Select
-                        value={workflowFile}
-                        onChange={(e) => setWorkflowFile(e.target.value)}
-                        label="Workflow"
-                        size="small"
-                        disabled={loading}
-                      >
-                        <MenuItem value="cart-lifecycle-smoke">cart-lifecycle-smoke</MenuItem>
-                        <MenuItem value="cart-item-mutation-smoke">cart-item-mutation-smoke</MenuItem>
-                        <MenuItem value="checkout-flow-smoke">checkout-flow-smoke</MenuItem>
-                        <MenuItem value="user-journey-smoke">user-journey-smoke</MenuItem>
-                      </Select>
-                    </FormControl>
-
-                    <Alert severity="info" icon={<InfoIcon fontSize="small" />} sx={{ fontSize: '0.8rem', py: 0.5, mb: 1.5 }}>
-                      <Typography variant="caption">
-                        Steps: 4 (create → get → patch → delete)
-                      </Typography>
-                    </Alert>
-                  </>
-                )}
-
-                {/* Upload YAML */}
-                {workflowSource === 'upload' && (
-                  <>
-                    <Box 
-                      sx={{ 
-                        border: 2, 
-                        borderStyle: 'dashed', 
-                        borderColor: workflowValidation?.status === 'success' ? 'success.main' : workflowValidation?.status === 'error' ? 'error.main' : 'grey.300',
-                        borderRadius: 1,
-                        p: 2,
-                        mb: 1,
-                        textAlign: 'center',
-                        bgcolor: 'background.paper',
-                        cursor: 'pointer',
-                        '&:hover': {
-                          bgcolor: 'grey.50'
-                        }
-                      }}
-                      onClick={() => document.getElementById('workflow-file-input').click()}
-                    >
-                      <input
-                        id="workflow-file-input"
-                        type="file"
-                        accept=".yaml,.yml"
-                        onChange={handleWorkflowFileUpload}
-                        style={{ display: 'none' }}
-                        disabled={loading}
-                      />
-                      <UploadFileIcon sx={{ fontSize: 40, color: 'text.secondary', mb: 1 }} />
-                      <Typography variant="body2" sx={{ mb: 0.5 }}>
-                        Drop workflow YAML here or click to choose file
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        Accepts .yaml or .yml files
-                      </Typography>
-                    </Box>
-
-                    {/* Validation Status */}
-                    {workflowValidation && (
-                      <Alert 
-                        severity={workflowValidation.status} 
-                        sx={{ mb: 1, fontSize: '0.85rem', py: 0.5 }}
-                      >
-                        {workflowValidation.message}
+              <Grid item xs={12} xl={4}>
+                <Paper variant="outlined" sx={{ p: 2 }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+                    Run Controls
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, flexDirection: 'column' }}>
+                    {isWorkflowRequired() && !isWorkflowConfigured() && (
+                      <Alert severity="warning" icon={<WarningIcon />} sx={{ py: 0.5, fontSize: '0.85rem' }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                          Workflow smoke requires a workflow definition.
+                        </Typography>
+                        <Typography variant="caption" sx={{ display: 'block', mt: 0.25 }}>
+                          Select a catalog workflow or upload YAML to continue.
+                        </Typography>
                       </Alert>
                     )}
 
-                    {/* Helper Text */}
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5, fontStyle: 'italic' }}>
-                      Workflow YAML defines ordered steps by operationId, capture/bind variables, and cleanup behavior.
-                    </Typography>
-
-                    {/* Save to Catalog Option */}
-                    {workflowYaml && workflowValidation?.status === 'success' && (
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={saveToLocalCatalog}
-                            onChange={(e) => setSaveToLocalCatalog(e.target.checked)}
-                            disabled={loading}
-                            size="small"
-                          />
-                        }
-                        label={<Typography variant="caption">Save to local catalog for reuse</Typography>}
-                      />
-                    )}
-                  </>
-                )}
-
-                {/* Always Cleanup Toggle */}
-                <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={alwaysCleanup}
-                        onChange={(e) => setAlwaysCleanup(e.target.checked)}
-                        disabled={loading}
-                      />
-                    }
-                    label="Always attempt cleanup"
-                  />
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 4, mt: 0.5, fontStyle: 'italic' }}>
-                    Run cleanup steps (e.g., delete resources) even if the workflow fails.
-                  </Typography>
-                </Box>
-              </Box>
-            )}
-          </Paper>
-        </Grid>
-
-        {/* Right Column - Results */}
-        <Grid item xs={12} md={8}>
-          {/* Empty State */}
-          {!summary && !loading && (
-            <Alert severity="info" icon={<InfoIcon />}>
-              Configure environment/capability and click Run to execute smoke tests.
-            </Alert>
-          )}
-
-          {/* Loading State */}
-          {loading && (
-            <Paper elevation={2} sx={{ p: 4, textAlign: 'center' }}>
-              <CircularProgress size={60} sx={{ mb: 2 }} />
-              <Typography variant="h6" sx={{ mb: 1 }}>
-                Executing Smoke Tests
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {testSuite === 'contract' && 'Executing contract checks...'}
-                {testSuite === 'workflow' && 'Running workflow steps...'}
-                {testSuite === 'both' && 'Executing contract checks and workflow steps...'}
-              </Typography>
-            </Paper>
-          )}
-
-          {/* Summary Card */}
-          {summary && !loading && (
-            <>
-              <Paper elevation={2} sx={{ p: 3, mb: 2 }}>
-                <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                  Summary
-                </Typography>
-                
-                <Grid container spacing={2}>
-                  <Grid item xs={12} md={4}>
-                    <Typography variant="caption" color="text.secondary">Status</Typography>
-                    <Box sx={{ mt: 0.5 }}>
-                      {getStatusChip(summary.status)}
-                    </Box>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Typography variant="caption" color="text.secondary">Target</Typography>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem', mt: 0.5 }}>
-                      {summary.target}
-                    </Typography>
-                  </Grid>
-                  <Grid item xs={12} md={4}>
-                    <Typography variant="caption" color="text.secondary">Spec Fingerprint</Typography>
-                    <Tooltip title={summary.specFingerprint}>
-                      <Typography variant="body2" sx={{ 
-                        fontFamily: 'monospace', 
-                        fontSize: '0.75rem', 
-                        mt: 0.5,
-                        maxWidth: '200px',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {summary.specFingerprint}
-                      </Typography>
-                    </Tooltip>
-                  </Grid>
-                </Grid>
-
-                {/* Test Source Metadata (shows where tests came from) */}
-                {testSource && (
-                  <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                      Test Source
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Type</Typography>
-                        <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                          {testSource.type}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Spec Fingerprint</Typography>
-                        <Tooltip title={testSource.fingerprint}>
-                          <Typography variant="body2" sx={{ 
-                            fontFamily: 'monospace', 
-                            fontSize: '0.75rem',
-                            maxWidth: '150px',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}>
-                            {testSource.fingerprint}
-                          </Typography>
-                        </Tooltip>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Generated At</Typography>
-                        <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                          {new Date(testSource.generatedAt).toLocaleString()}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-                )}
-
-                {runMetadata && (
-                  <Box sx={{ mt: 2, pt: 2, borderTop: 1, borderColor: 'divider' }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                      Run Metadata
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Run ID</Typography>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                          {runMetadata.runId || 'N/A'}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Start Time</Typography>
-                        <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                          {runMetadata.startTime ? new Date(runMetadata.startTime).toLocaleString() : 'N/A'}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="caption" color="text.secondary">Duration</Typography>
-                        <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                          {runMetadata.duration || 'N/A'}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-                )}
-              </Paper>
-
-              {/* Findings Card */}
-              {findings && findings.length > 0 && (
-                <Paper elevation={2} sx={{ p: 3, mb: 2 }}>
-                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
-                    Findings
-                  </Typography>
-                  
-                  {findings.map((finding, idx) => (
-                    <Alert 
-                      key={idx}
-                      severity={getSeverityColor(finding.severity)}
-                      icon={getSeverityIcon(finding.severity)}
-                      sx={{ mb: 2 }}
+                    <Button
+                      variant="outlined"
+                      fullWidth
+                      onClick={handleGenerateTestsPreview}
+                      disabled={loading || generatingPreview || specSource !== 'upload' || !specUploadText.trim()}
+                      startIcon={generatingPreview ? <CircularProgress size={18} /> : <InfoIcon />}
+                      sx={{ textTransform: 'none' }}
                     >
-                      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                        {finding.title}
-                      </Typography>
-                      <Typography variant="body2" sx={{ mb: 1 }}>
-                        {finding.message}
-                      </Typography>
-                      
-                      {finding.nextSteps && finding.nextSteps.length > 0 && (
-                        <Box sx={{ mt: 1.5, p: 1.5, bgcolor: 'rgba(33, 150, 243, 0.08)', borderRadius: 1 }}>
-                          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                            💡 Suggested Next Steps:
-                          </Typography>
-                          <Box component="ol" sx={{ pl: 2.5, my: 0 }}>
-                            {finding.nextSteps.map((step, stepIdx) => (
-                              <Typography key={stepIdx} component="li" variant="body2" sx={{ mb: 0.5 }}>
-                                {step}
-                              </Typography>
-                            ))}
-                          </Box>
-                        </Box>
-                      )}
-                    </Alert>
-                  ))}
-                </Paper>
-              )}
+                      {generatingPreview ? 'Generating...' : 'Generate Tests from Pasted Spec'}
+                    </Button>
 
-              {/* Results Accordion */}
-              <Paper elevation={2} sx={{ mb: 2 }}>
-                <Accordion defaultExpanded>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      Contract Smoke Results
-                    </Typography>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    {results?.contractTests && results.contractTests.length > 0 ? (
-                      <Table size="small">
-                        <TableHead>
-                          <TableRow>
-                            <TableCell>Test</TableCell>
-                            <TableCell>Operation ID</TableCell>
-                            <TableCell>Expected</TableCell>
-                            <TableCell>Actual</TableCell>
-                            <TableCell>Status</TableCell>
-                            <TableCell>Duration</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {results.contractTests.map((test, idx) => (
-                            <TableRow key={idx}>
-                              <TableCell>{test.name}</TableCell>
-                              <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                                {test.operationId}
-                              </TableCell>
-                              <TableCell>{test.expected}</TableCell>
-                              <TableCell>{test.actual}</TableCell>
-                              <TableCell>
-                                <Chip 
-                                  label={test.status} 
-                                  color={test.status === 'PASS' ? 'success' : 'error'}
-                                  size="small"
-                                />
-                              </TableCell>
-                              <TableCell>{test.duration}ms</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', textAlign: 'center', py: 2 }}>
-                        No contract test results available.
+                    <Button
+                      variant="contained"
+                      size="large"
+                      fullWidth
+                      startIcon={loading ? <CircularProgress size={20} color="inherit" /> : <PlayArrowIcon />}
+                      onClick={handleRunTests}
+                      disabled={loading || generatingPreview || !canRunTests()}
+                    >
+                      {loading ? 'Running...' : 'Run Smoke Tests'}
+                    </Button>
+
+                    {specSource === 'upload' && !generatedPreview && (
+                      <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+                        Generate tests from pasted spec before running.
                       </Typography>
                     )}
-                  </AccordionDetails>
-                </Accordion>
 
-                {(testSuite === 'workflow' || testSuite === 'both') && (
-                  <Accordion>
-                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                        Workflow Smoke Results
-                      </Typography>
-                    </AccordionSummary>
-                    <AccordionDetails>
-                      {results?.workflowTests && results.workflowTests.length > 0 ? (
-                        <Table size="small">
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Step</TableCell>
-                              <TableCell>Description</TableCell>
-                              <TableCell>Expected</TableCell>
-                              <TableCell>Actual</TableCell>
-                              <TableCell>Status</TableCell>
-                              <TableCell>Duration</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {results.workflowTests.map((test, idx) => (
-                              <TableRow key={idx}>
-                                <TableCell>{test.step}</TableCell>
-                                <TableCell>{test.description}</TableCell>
-                                <TableCell>{test.expected}</TableCell>
-                                <TableCell>{test.actual}</TableCell>
-                                <TableCell>
-                                  <Chip 
-                                    label={test.status} 
-                                    color={test.status === 'PASS' ? 'success' : 'error'}
-                                    size="small"
-                                  />
-                                </TableCell>
-                                <TableCell>{test.duration}ms</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      ) : (
-                        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', textAlign: 'center', py: 2 }}>
-                          No workflow test results available.
-                        </Typography>
-                      )}
-                    </AccordionDetails>
-                  </Accordion>
-                )}
+                    <Box sx={{ display: 'flex', gap: 1, justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Button
+                        size="small"
+                        onClick={handleValidateConfig}
+                        disabled={loading}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Validate Configuration
+                      </Button>
+                      <Button
+                        size="small"
+                        startIcon={<RestartAltIcon />}
+                        onClick={handleReset}
+                        disabled={loading}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Reset
+                      </Button>
+                    </Box>
+                  </Box>
+                </Paper>
+              </Grid>
+            </Grid>
+          </Box>
+        </Box>
+        </Box>
+      </Paper>
 
-                <Accordion>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      Evidence & Logs
-                    </Typography>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                      Raw request/response metadata will appear here when available.
-                    </Typography>
-                  </AccordionDetails>
-                </Accordion>
-              </Paper>
-
-              {/* Export Button */}
-              <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <Button
-                  variant="outlined"
-                  startIcon={<DownloadIcon />}
-                  onClick={handleExport}
-                >
-                  Export Smoke Test Diagnostics
-                </Button>
-              </Box>
-            </>
-          )}
-        </Grid>
-      </Grid>
+      <Paper elevation={2} sx={{ p: 3, mt: 3 }}>
+        <Box sx={{ display: 'grid', gap: 3 }}>
+          <Box>
+            {renderGeneratedFilesPanel()}
+          </Box>
+          <Box sx={{ pt: 2, borderTop: 1, borderColor: 'divider' }}>
+            {renderResultsPanel()}
+          </Box>
+        </Box>
+      </Paper>
     </Container>
   );
 }

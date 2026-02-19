@@ -4,6 +4,7 @@ const API_BASE = 'http://localhost:8081/api/db';
 const SQL_API_BASE = 'http://localhost:8081/api/sql';
 const DEPLOYMENT_API_BASE = '/api/deployment';
 const SMOKE_TEST_API_BASE = 'http://localhost:8081/api/smoke-tests';
+const SMOKE_API_BASE = 'http://localhost:8081/api/smoke';
 const AI_API_BASE = 'http://localhost:8081/api/ai';
 const DEPLOYMENT_AI_API_BASE = 'http://localhost:8082/api/ai';
 
@@ -126,6 +127,9 @@ export const apiService = {
   
   exportSmokeTestResults: (runId) =>
     axios.get(`${SMOKE_TEST_API_BASE}/export`, { params: { runId } }),
+
+  generateSmokeTestsPreview: (payload) =>
+    axios.post(`${SMOKE_API_BASE}/spec/generate-tests`, payload),
 
   // AI Triage Assistant
   askTriageAssistant: (payload) => {

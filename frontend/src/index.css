@@ -4,8 +4,22 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+html,
 body {
+  overflow-y: scroll;
   font-family: 'Roboto', 'Helvetica', 'Arial', sans-serif;
+  scrollbar-gutter: stable both-edges;
+}
+
+body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
