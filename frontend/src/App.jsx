@@ -94,8 +94,8 @@ function App() {
                 }
               }}
             >
-              <Tab label="DB Doctor" />
               <Tab label="Deployment Doctor" />
+              <Tab label="DB Doctor" />
               <Tab label="Smoke Tests" />
               <Tab label="Exports" />
               <Tab label="Help" />
@@ -106,20 +106,20 @@ function App() {
         {/* Page Content */}
         <Box sx={{ flexGrow: 1, bgcolor: '#f5f5f5' }}>
           {activeModuleTab === 0 && (
+            <DeploymentDoctorPage
+              addConsoleMessage={addConsoleMessage}
+              k8sStatus={k8sStatus}
+              setK8sStatus={setK8sStatus}
+            />
+          )}
+
+          {activeModuleTab === 1 && (
             <DBDoctorPage
               connectionId={connectionId}
               setConnectionId={setConnectionId}
               connectionStatus={connectionStatus}
               setConnectionStatus={setConnectionStatus}
               addConsoleMessage={addConsoleMessage}
-            />
-          )}
-
-          {activeModuleTab === 1 && (
-            <DeploymentDoctorPage
-              addConsoleMessage={addConsoleMessage}
-              k8sStatus={k8sStatus}
-              setK8sStatus={setK8sStatus}
             />
           )}
 

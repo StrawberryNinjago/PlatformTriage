@@ -270,6 +270,62 @@ Frontend will start on **http://localhost:5173**
 
 ---
 
+## Work Laptop Runbook (Deployment Doctor)
+
+Use this when running Deployment Doctor on a work laptop against AKS.
+
+### 1. Authenticate to Azure and target subscription
+
+```bash
+az login
+az account set --subscription "<your-subscription-id>"
+az aks get-credentials -g "<resource-group>" -n "<aks-cluster>" --overwrite-existing
+```
+
+### 2. Verify Kubernetes access
+
+```bash
+kubectl config current-context
+kubectl get ns
+```
+
+### 3. Start the app locally
+
+Backend (port 8082):
+
+```bash
+cd /Users/yanalbright/Downloads/Triage/apps/platformtriage
+mvn spring-boot:run
+```
+
+Frontend (port 3000):
+
+```bash
+cd /Users/yanalbright/Downloads/Triage/frontend
+npm install
+npm run dev
+```
+
+### 4. Open Deployment Doctor UI
+
+- Open `http://localhost:3000`
+- Go to **Deployment Doctor**
+
+### 5. Required query inputs in UI
+
+- `namespace` is required
+- You must provide either `Label Selector` or `Release`
+- If you do not use label selectors directly, use `Release`
+- `Release` maps to selector: `app.kubernetes.io/instance=<release>`
+- Namespace-only is not enough. Use: `namespace + (selector or release)`
+
+Examples:
+
+- `namespace=cart`, `selector=app=cart-app`
+- `namespace=cart`, `release=cart`
+
+---
+
 ## Using DB Doctor
 
 ### Main Features

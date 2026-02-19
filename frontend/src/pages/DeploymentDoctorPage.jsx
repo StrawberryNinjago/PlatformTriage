@@ -18,7 +18,9 @@ import {
   ListItemText,
   TextField,
   Button,
-  Tooltip
+  Tooltip,
+  Checkbox,
+  FormControlLabel
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import WarningIcon from '@mui/icons-material/Warning';
@@ -90,6 +92,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
   const [tracePodNameQuery, setTracePodNameQuery] = useState('');
   const [traceLineLimitQuery, setTraceLineLimitQuery] = useState(500);
   const [traceSearchResult, setTraceSearchResult] = useState(null);
+  const [traceErrorsOnly, setTraceErrorsOnly] = useState(false);
 
   const configFieldSx = {
     '& .MuiInputBase-input': { fontSize: '1.42rem', fontWeight: 600, lineHeight: 1.35 },
@@ -342,6 +345,49 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
     }
   };
 
+  const isErrorLine = (line) => {
+    if (!line || typeof line !== 'string') {
+      return false;
+    }
+    return /(log\.error|\berror\b|\bexception\b|\bfatal\b|\bpanic\b)/i.test(line);
+  };
+
+  const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const renderHighlightedTraceLine = (line, queryValue) => {
+    if (!line || typeof line !== 'string') {
+      return '';
+    }
+
+    const query = (queryValue || '').trim();
+    if (!query) {
+      return line;
+    }
+
+    const regex = new RegExp(`(${escapeRegExp(query)})`, 'ig');
+    const parts = line.split(regex);
+
+    return parts.map((part, idx) => {
+      if (part.toLowerCase() !== query.toLowerCase()) {
+        return <span key={`${part}-${idx}`}>{part}</span>;
+      }
+
+      return (
+        <span
+          key={`${part}-${idx}`}
+          style={{
+            backgroundColor: 'rgba(56, 189, 248, 0.35)',
+            color: '#f8fafc',
+            borderRadius: 3,
+            padding: '0 2px'
+          }}
+        >
+          {part}
+        </span>
+      );
+    });
+  };
+
   // ⭐ IMPROVEMENT 1: Severity-driven icons (backend uses HIGH/MED/INFO)
   const getSeverityIcon = (severity) => {
     switch ((severity || '').toUpperCase()) {
@@ -503,8 +549,21 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
   };
 
   const renderTraceSearchPanel = () => {
-    const matches = traceSearchResult?.matches || [];
-    const hasNoMatchResult = traceSearchResult && (traceSearchResult.totalMatches === 0 || matches.length === 0);
+    const rawMatches = traceSearchResult?.matches || [];
+    const filteredMatches = traceErrorsOnly
+      ? rawMatches
+          .map((match) => ({
+            ...match,
+            lines: (match.lines || []).filter(isErrorLine)
+          }))
+          .filter((match) => (match.lines || []).length > 0)
+      : rawMatches;
+    const filteredTotalMatches = filteredMatches.reduce(
+      (sum, match) => sum + ((match.lines || []).length),
+      0
+    );
+    const hasNoMatchResult = traceSearchResult && (filteredTotalMatches === 0 || filteredMatches.length === 0);
+    const queryForHighlight = traceSearchResult?.traceId || traceIdQuery;
 
     return (
       <Paper elevation={2} sx={{ p: 2.25, mb: 3 }}>
@@ -569,6 +628,22 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
                 </Button>
               </Box>
             </Grid>
+            <Grid item xs={12}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <FormControlLabel
+                  control={(
+                    <Checkbox
+                      checked={traceErrorsOnly}
+                      onChange={(e) => setTraceErrorsOnly(e.target.checked)}
+                    />
+                  )}
+                  label="Errors only (log.error / error / exception)"
+                />
+                <Typography variant="caption" color="text.secondary">
+                  Filter applies to current search results instantly.
+                </Typography>
+              </Box>
+            </Grid>
           </Grid>
         </Box>
 
@@ -582,25 +657,56 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
                 Namespace: {traceSearchResult.namespace || '-'} | Searched pods: {traceSearchResult.searchedPods}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Total matches: {traceSearchResult.totalMatches}
+                Total matches shown: {filteredTotalMatches}
+                {traceErrorsOnly ? ` (raw: ${traceSearchResult.totalMatches})` : ''}
               </Typography>
             </Box>
 
             {hasNoMatchResult && (
               <Alert severity="info" sx={{ mb: 1 }}>
-                No matches found. Try a different text, larger line limit, or broader pod scope.
+                {traceErrorsOnly
+                  ? 'No error-level lines in matched logs. Disable "Errors only" to view all matched lines.'
+                  : 'No matches found. Try a different text, larger line limit, or broader pod scope.'}
               </Alert>
             )}
 
-            {matches.map((match, idx) => (
+            {filteredMatches.map((match, idx) => (
               <Paper key={idx} variant="outlined" sx={{ p: 1.5, mb: 1.5, borderRadius: 1.5 }}>
-                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                  Pod: <strong>{match.podName || `Pod ${idx + 1}`}</strong>
-                </Typography>
-                <Box sx={{ bgcolor: '#0f172a', color: '#f8fafc', p: 1.5, borderRadius: 1, maxHeight: 220, overflow: 'auto' }}>
-                  <Typography component="pre" variant="body2" sx={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace', whiteSpace: 'pre-wrap', margin: 0 }}>
-                    {(match.lines || []).join('\n') || 'No matched lines'}
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75, gap: 1, flexWrap: 'wrap' }}>
+                  <Typography variant="subtitle2">
+                    Pod: <strong>{match.podName || `Pod ${idx + 1}`}</strong>
                   </Typography>
+                  <Chip
+                    label={`${(match.lines || []).length} line${(match.lines || []).length === 1 ? '' : 's'}`}
+                    size="small"
+                    color={traceErrorsOnly ? 'error' : 'default'}
+                    variant={traceErrorsOnly ? 'filled' : 'outlined'}
+                  />
+                </Box>
+                <Box sx={{ bgcolor: '#0f172a', color: '#f8fafc', p: 1.5, borderRadius: 1, maxHeight: 220, overflow: 'auto' }}>
+                  <Box
+                    component="pre"
+                    sx={{
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                      whiteSpace: 'pre-wrap',
+                      margin: 0
+                    }}
+                  >
+                    {(match.lines || []).length > 0 ? (match.lines || []).map((line, lineIdx) => (
+                      <Typography
+                        key={`${match.podName || idx}-${lineIdx}`}
+                        component="div"
+                        variant="body2"
+                        sx={{
+                          m: 0,
+                          py: 0.15,
+                          borderBottom: lineIdx < (match.lines || []).length - 1 ? '1px solid rgba(148, 163, 184, 0.18)' : 'none'
+                        }}
+                      >
+                        {renderHighlightedTraceLine(line, queryForHighlight)}
+                      </Typography>
+                    )) : 'No matched lines'}
+                  </Box>
                 </Box>
               </Paper>
             ))}
