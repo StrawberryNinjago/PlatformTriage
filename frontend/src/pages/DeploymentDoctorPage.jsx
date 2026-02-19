@@ -30,6 +30,7 @@ import InfoIcon from '@mui/icons-material/Info';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import CheckIcon from '@mui/icons-material/Check';
+import DownloadIcon from '@mui/icons-material/Download';
 import axios from 'axios';
 import { apiService } from '../services/apiService';
 import AiAssistantPanel from '../components/AiAssistantPanel';
@@ -93,6 +94,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
   const [traceLineLimitQuery, setTraceLineLimitQuery] = useState(500);
   const [traceSearchResult, setTraceSearchResult] = useState(null);
   const [traceErrorsOnly, setTraceErrorsOnly] = useState(false);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
 
   const configFieldSx = {
     '& .MuiInputBase-input': { fontSize: '1.42rem', fontWeight: 600, lineHeight: 1.35 },
@@ -345,6 +347,49 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
     }
   };
 
+  const handleExportDeploymentDiagnostics = async () => {
+    const effectiveNamespace = (summary?.target?.namespace || namespace || '').trim();
+    const effectiveSelector = (summary?.target?.selector || selector || '').trim();
+    const effectiveRelease = (summary?.target?.release || release || '').trim();
+
+    if (!effectiveNamespace) {
+      addConsoleMessage('✗ Namespace is required to export diagnostics', 'error');
+      setError('Namespace is required to export diagnostics');
+      return;
+    }
+
+    if (!effectiveSelector && !effectiveRelease) {
+      addConsoleMessage('✗ Provide selector or release to export diagnostics', 'error');
+      setError('Provide selector or release to export diagnostics');
+      return;
+    }
+
+    setExportingDiagnostics(true);
+    try {
+      addConsoleMessage(`📦 Exporting deployment diagnostics for namespace: ${effectiveNamespace}...`, 'info');
+      const response = await apiService.exportDeploymentDiagnostics(
+        effectiveNamespace,
+        effectiveSelector || undefined,
+        effectiveRelease || undefined
+      );
+      const payload = response?.data || {};
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `deployment-diagnostics-${effectiveNamespace}-${Date.now()}.json`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      addConsoleMessage('✓ Downloaded deployment diagnostics bundle', 'success');
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || err.message;
+      setError(errorMsg);
+      addConsoleMessage(`✗ Failed to export deployment diagnostics: ${errorMsg}`, 'error');
+    } finally {
+      setExportingDiagnostics(false);
+    }
+  };
+
   const isErrorLine = (line) => {
     if (!line || typeof line !== 'string') {
       return false;
@@ -507,7 +552,7 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
 
   const renderQuickActions = () => (
     <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>
+      <Typography variant="h6" sx={{ mb: 1 }}>
           Deployment Diagnostics Actions
         </Typography>
         <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -518,6 +563,15 @@ function DeploymentDoctorPage({ addConsoleMessage, setK8sStatus }) {
           sx={{ minHeight: 40, fontSize: '1.05rem', fontWeight: 700 }}
         >
           {versionCheckLoading ? <CircularProgress size={18} /> : 'Check Versions'}
+        </Button>
+        <Button
+          variant="outlined"
+          onClick={handleExportDeploymentDiagnostics}
+          disabled={exportingDiagnostics || loading || (!summary && !namespace)}
+          startIcon={exportingDiagnostics ? <CircularProgress size={18} /> : <DownloadIcon />}
+          sx={{ minHeight: 40, fontSize: '1.02rem', fontWeight: 700, textTransform: 'none' }}
+        >
+          {exportingDiagnostics ? 'Exporting...' : 'Export Diagnostics'}
         </Button>
         <Typography variant="body2" color="text.secondary">
           Use this panel to query logs by trace id or plain text.

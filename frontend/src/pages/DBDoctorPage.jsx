@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Container, Paper, Box, Tabs, Tab, Chip, Typography } from '@mui/material';
+import { Container, Paper, Box, Tabs, Tab, Chip, Typography, Button, CircularProgress } from '@mui/material';
+import DownloadIcon from '@mui/icons-material/Download';
 import ConnectionForm from '../components/ConnectionForm';
 import SummaryPanel from '../components/SummaryPanel';
 import ResultsPanel from '../components/ResultsPanel';
@@ -31,6 +32,7 @@ function DBDoctorPage({
   const [sourceConnectionDetails, setSourceConnectionDetails] = useState(null);
   const [comparisonResult, setComparisonResult] = useState(null);
   const [activeConnections, setActiveConnections] = useState([]);
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
 
   useEffect(() => {
     if (connectionStatus === 'connected') {
@@ -209,6 +211,33 @@ function DBDoctorPage({
     }
   };
 
+  const handleExportDiagnosticsBundle = async () => {
+    if (!connectionId) {
+      addConsoleMessage('✗ Connect to a database first to export diagnostics', 'error');
+      return;
+    }
+
+    setExportingDiagnostics(true);
+    try {
+      addConsoleMessage(`📦 Exporting DB diagnostics for ${connectionId}...`, 'info');
+      const response = await apiService.exportDiagnosticsBundle(connectionId);
+      const payload = response?.data || {};
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `db-diagnostics-${connectionId}-${Date.now()}.json`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      addConsoleMessage('✓ Downloaded DB diagnostics bundle', 'success');
+    } catch (error) {
+      const errorMsg = error.response?.data?.message || error.message;
+      addConsoleMessage(`✗ Failed to export DB diagnostics: ${errorMsg}`, 'error');
+    } finally {
+      setExportingDiagnostics(false);
+    }
+  };
+
   return (
     <Container
       maxWidth={false}
@@ -275,42 +304,58 @@ function DBDoctorPage({
             />
           </Box>
 
-          {connectionStatus === 'connected' && (
-            <Box
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: 1,
+              borderColor: 'divider',
+              bgcolor: '#f8fbff',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              flexWrap: 'wrap'
+            }}
+          >
+            <Chip
+              size="small"
+              color={connectionStatus === 'connected'
+                ? (activeConnections.length >= 2 ? 'success' : 'default')
+                : 'default'}
+              label={connectionStatus === 'connected'
+                ? `${activeConnections.length} active environment${activeConnections.length === 1 ? '' : 's'}`
+                : 'Not connected'}
               sx={{
-                px: 2,
-                py: 1.25,
-                borderBottom: 1,
-                borderColor: 'divider',
-                bgcolor: '#f8fbff',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1.5,
-                flexWrap: 'wrap'
+                '& .MuiChip-label': {
+                  fontSize: '0.98rem',
+                  fontWeight: 700
+                }
               }}
+            />
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ fontSize: '1rem', fontWeight: 500 }}
             >
-              <Chip
+              {connectionStatus === 'connected'
+                ? (activeConnections.length >= 2
+                    ? 'Multi-env compare is ready. Use Compare tab or ask: "Do my two environments align?"'
+                    : 'Connect one more environment to enable alignment compare.')
+                : 'Connect to DB first. Export Diagnostics will then download the diagnostics bundle.'}
+            </Typography>
+            <Box sx={{ ml: 'auto' }}>
+              <Button
                 size="small"
-                color={activeConnections.length >= 2 ? 'success' : 'default'}
-                label={`${activeConnections.length} active environment${activeConnections.length === 1 ? '' : 's'}`}
-                sx={{
-                  '& .MuiChip-label': {
-                    fontSize: '0.98rem',
-                    fontWeight: 700
-                  }
-                }}
-              />
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ fontSize: '1rem', fontWeight: 500 }}
+                variant="outlined"
+                startIcon={exportingDiagnostics ? <CircularProgress size={16} /> : <DownloadIcon />}
+                onClick={handleExportDiagnosticsBundle}
+                disabled={exportingDiagnostics || !connectionId || connectionStatus !== 'connected'}
+                sx={{ textTransform: 'none', fontWeight: 700 }}
               >
-                {activeConnections.length >= 2
-                  ? 'Multi-env compare is ready. Use Compare tab or ask: "Do my two environments align?"'
-                  : 'Connect one more environment to enable alignment compare.'}
-              </Typography>
+                {exportingDiagnostics ? 'Exporting...' : 'Export Diagnostics'}
+              </Button>
             </Box>
-          )}
+          </Box>
 
           <Tabs 
             value={activeTab} 

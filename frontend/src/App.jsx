@@ -6,7 +6,6 @@ import ConsolePanel from './components/ConsolePanel';
 import DBDoctorPage from './pages/DBDoctorPage';
 import DeploymentDoctorPage from './pages/DeploymentDoctorPage';
 import SmokeTestsPage from './pages/SmokeTestsPage';
-import ExportsPage from './pages/ExportsPage';
 import HelpPage from './pages/HelpPage';
 import './App.css';
 
@@ -97,7 +96,6 @@ function App() {
               <Tab label="Deployment Doctor" />
               <Tab label="DB Doctor" />
               <Tab label="Smoke Tests" />
-              <Tab label="Exports" />
               <Tab label="Help" />
             </Tabs>
           </Container>
@@ -130,12 +128,6 @@ function App() {
           )}
 
           {activeModuleTab === 3 && (
-            <ExportsPage
-              addConsoleMessage={addConsoleMessage}
-            />
-          )}
-
-          {activeModuleTab === 4 && (
             <HelpPage />
           )}
         </Box>

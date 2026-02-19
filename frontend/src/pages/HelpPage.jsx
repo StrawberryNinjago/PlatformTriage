@@ -125,25 +125,25 @@ function HelpPage() {
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Box>
             <Typography variant="h6">
-              Exports
+              Exports & Sharing
             </Typography>
             <Typography variant="body2" color="textSecondary">
-              Export diagnostics for sharing
+              Export directly from each doctor page
             </Typography>
           </Box>
         </AccordionSummary>
         <AccordionDetails>
           <Box>
             <Typography variant="body2" paragraph>
-              Export diagnostic data in multiple formats:
+              There is no separate Exports page. Use the in-page export actions:
             </Typography>
             <Typography variant="body2" paragraph>
-              • <strong>JIRA Bundle:</strong> Comprehensive report formatted for JIRA tickets<br/>
-              • <strong>Clipboard Copy:</strong> Quick text format for chat/email<br/>
-              • <strong>History:</strong> Access previous diagnostic exports
+              • <strong>Deployment Doctor:</strong> Use <strong>Export Diagnostics</strong> in Deployment Diagnostics Actions<br/>
+              • <strong>DB Doctor:</strong> Use <strong>Export Diagnostics</strong> in the connected status rail<br/>
+              • <strong>Smoke Tests:</strong> Download generated artifacts from the Generated Files section
             </Typography>
-            <Alert severity="warning" sx={{ mt: 2 }}>
-              Export functionality coming soon.
+            <Alert severity="info" sx={{ mt: 2 }}>
+              Each export downloads a JSON artifact you can attach to tickets or share with teams.
             </Alert>
           </Box>
         </AccordionDetails>
@@ -198,4 +198,3 @@ function HelpPage() {
 }
 
 export default HelpPage;
-
